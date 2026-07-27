@@ -1,0 +1,18 @@
+from pathlib import Path
+
+import pytest
+
+from mani_sim.config import load_config
+
+
+def test_demo_config_loads() -> None:
+    config = load_config(Path("configs/demo0.yaml"))
+    assert config.simulation.control_mode == "pd_ee_delta_pos"
+    assert config.workspace.work_height_m == 0.45
+
+
+def test_invalid_workspace_bounds_fail(tmp_path: Path) -> None:
+    path = tmp_path / "bad.yaml"
+    path.write_text("workspace:\n  x_bounds_m: [1, 0]\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="lower bound"):
+        load_config(path)

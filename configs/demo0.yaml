@@ -1,0 +1,49 @@
+simulation:
+  env_id: Empty-v1
+  sim_backend: cpu
+  control_mode: pd_ee_delta_pos
+  robot_uid: panda_wristcam
+  seed: 0
+
+workspace:
+  work_height_m: 0.45
+  z_bounds_m: [0.05, 0.65]
+  x_bounds_m: [0.15, 0.75]
+  y_bounds_m: [-0.55, 0.55]
+
+servo:
+  gain: 0.5
+  max_delta_m: 0.01
+  deadband_m: 0.002
+  progress_epsilon_m: 0.0005
+  saturation_steps: 12
+  saturation_distance_m: 0.03
+  release_target_delta_m: 0.04
+
+input:
+  gripper_toggle_key: space
+  quit_key: q
+  reset_key: r
+  vertical_up_key: u
+  vertical_down_key: j
+  vertical_speed_mps: 0.12
+  top_view_key: "1"
+  front_view_key: "2"
+  wrist_view_key: "3"
+
+camera:
+  center_x_m: 0.45
+  center_y_m: 0.0
+  height_above_work_plane_m: 0.75
+  vertical_fov_rad: 0.8
+
+recording:
+  enabled: true
+  path: runs/demo0.jsonl
+
+reachability:
+  enabled: true
+  path: calibrations/panda_fixed_orientation.json
+  maximum_height_delta_m: 0.001
+  previous_safe_target_weight: 0.7
+  maximum_projected_target_step_m: 0.03
