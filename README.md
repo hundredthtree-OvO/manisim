@@ -16,6 +16,8 @@ uv sync --locked
 
 ## 运行
 
+### 人工鼠标采集
+
 ```bash
 uv run mani-sim --config configs/demo0.yaml
 ```
@@ -57,7 +59,57 @@ TOP 与 FRONT 共用同一个世界 TCP 目标。FRONT 调整的高度会成为�
 安全状态和记录状态。任务区域由当前 Task 注入；Pick-and-Place 显示阶段、
 抓取状态、目标距离和成功状态。状态面板不接收鼠标控制。
 
-红点是原始鼠标目标，绿点是经过可达域投影和稳定保护后的控制目标。默认轨迹写入 `runs/demo0.jsonl`。
+红点是原始鼠标目标，绿点是经过可达域投影和稳定保护后的控制目标。
+
+### 自动 Pick-and-Place
+
+```bash
+uv run mani-sim --config configs/scripted_pick_place.yaml
+```
+
+自动模式仍会打开同一个可视化窗口。机械臂由确定性航点策略控制，TOP、FRONT、
+WRIST 画面、目标标记、任务状态和实时力曲线都会继续刷新；`1/2/3` 仍可切换
+观察视图，`R` 可重新开始当前 episode，`Q` 退出。鼠标、`U/J` 和 `Space`
+不会覆盖自动策略。
+
+自动配置默认启用窄范围、可复现的位置随机化：每条 episode 根据独立 seed
+重新生成方块 XY 和目标区 XY，同时强制两者至少间隔 `0.18 m`。当前范围经过
+固定向下夹爪的真实物理回归，适合先验证采集链路；它还不包含尺寸、质量、
+摩擦、光照或障碍随机化。
+
+状态面板的 `source` 显示 `scripted_pick_place`，`policy phase` 依次经过
+`approach -> descend -> close -> lift -> transport -> lower -> open ->
+retreat`。成功后默认保留 25 个稳定步，自动封闭当前 episode、复位场景并开始
+下一条；单条超过 800 步会以 `policy_timeout` 结束。这两个值可在
+[scripted_pick_place.yaml](configs/scripted_pick_place.yaml) 的
+`collection.success_settle_steps` 和 `collection.max_episode_steps` 修改。
+
+两种模式都使用相同的 `RuntimeObservation -> TaskSpaceCommand ->
+CommandExecutor` 安全执行链，并写入正式 session：
+
+```text
+runs/<session-id>/
+├── metadata.json
+├── episodes.jsonl
+└── episodes/episode_*.jsonl
+```
+
+每帧记录包含 `action_source` 和 `policy_phase`，episode 索引包含
+`success`、`policy_timeout`、手动复位或退出等结束原因。
+
+批量采集 20 条并在完成后自动生成统计：
+
+```bash
+uv run mani-sim --config configs/scripted_pick_place.yaml --episodes 20
+```
+
+结果写入当前 session 的 `summary.json`，包含成功率、结束原因、平均步数、
+各策略阶段平均耗时，以及 grip/object/unintended 三类力的均值、峰值和
+P95。已有 session 也可以重新统计：
+
+```bash
+uv run mani-sim-report runs/<session-id>
+```
 
 立方体默认位于 `(0.45, 0.0)`，边长 4 cm，小于 Panda 约 8 cm 的最大
 夹爪开口。建议先移动到立方体正上方，再用 `J` 下降至抓取中心
@@ -92,9 +144,10 @@ uv run mani-sim-calibrate
 ```bash
 uv run pytest
 uv run mani-sim --max-steps 100
+uv run mani-sim --config configs/scripted_pick_place.yaml --max-steps 700
 ```
 
-第二条需要图形会话，用于有限步 GUI 冒烟测试。
+后两条需要图形会话；第三条还能覆盖自动抓取、放置、成功复位和可视化路径。
 
 真实 Panda IK + PD 物理回归需要 NVIDIA/Vulkan 图形环境：
 

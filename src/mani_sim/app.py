@@ -5,7 +5,7 @@ import contextlib
 import importlib.metadata
 import platform
 import time
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
@@ -14,8 +14,13 @@ import numpy as np
 
 import mani_skill.envs  # noqa: F401 - imports register ManiSkill environments
 from mani_skill.utils import sapien_utils
+from mani_sim.action_sources.mouse import MouseActionSource
+from mani_sim.action_sources.scripted_pick_place import (
+    ScriptedPickPlaceSource,
+)
 from mani_sim.config import AppConfig, load_config
-from mani_sim.control.ee_servo import EEServo, build_normalized_panda_action
+from mani_sim.control.command import TaskSpaceCommand
+from mani_sim.control.ee_servo import EEServo
 from mani_sim.control.workspace_guard import WorkspaceGuard
 from mani_sim.control.scene_collision_guard import SceneCollisionGuard
 from mani_sim.input.sapien_pointer import SapienPointer
@@ -24,11 +29,16 @@ from mani_sim.input.height import update_height
 from mani_sim.input.view_selection import ViewSelection
 from mani_sim.reachability import ReachabilityMap
 from mani_sim.recording.episode_recorder import EpisodeRecorder
+from mani_sim.recording.session_report import write_session_report
 from mani_sim.robot_setup import initialize_panda
 from mani_sim.environments.scenario import Scenario, build_scenario
+from mani_sim.runtime.command_executor import CommandExecutor
 from mani_sim.runtime.reset_manager import ResetManager
-from mani_sim.runtime.contact_forces import sample_contact_forces
-from mani_sim.tasks.base import TaskObservation
+from mani_sim.runtime.observation import (
+    RuntimeObservation,
+    capture_runtime_observation,
+    single_env_vector,
+)
 from mani_sim.tasks.pick_place import PickPlaceTask
 from mani_sim.visualization.target_markers import TargetMarkers
 from mani_sim.visualization.camera_views import AuxiliaryCameraPanel
@@ -47,26 +57,6 @@ def _package_version(name: str) -> str:
         return importlib.metadata.version(name)
     except importlib.metadata.PackageNotFoundError:
         return "unknown"
-
-
-def _to_numpy(value: Any) -> np.ndarray:
-    if hasattr(value, "detach"):
-        value = value.detach()
-    if hasattr(value, "cpu"):
-        value = value.cpu()
-    return np.asarray(value, dtype=np.float64)
-
-
-def _single_env_vector(value: Any) -> np.ndarray:
-    array = _to_numpy(value)
-    if array.ndim == 2 and array.shape[0] == 1:
-        array = array[0]
-    return array
-
-
-def _single_env_bool(value: Any) -> bool:
-    array = _to_numpy(value)
-    return bool(array.reshape(-1)[0])
 
 
 def _controller_delta_limit(env: gym.Env) -> float:
@@ -172,7 +162,68 @@ def _add_top_camera(base_env: Any, config: AppConfig) -> Any:
     )
 
 
-def run(config: AppConfig, *, max_steps: int | None = None) -> None:
+@dataclass(frozen=True)
+class EpisodeReset:
+    observation: RuntimeObservation
+    target_height_m: float
+    target_depth_y_m: float
+    gripper_target: float
+    previous_safe_target: np.ndarray
+
+
+def _reset_episode(
+    env: gym.Env,
+    scenario: Scenario,
+    executor: CommandExecutor,
+    task: Any,
+    reset_manager: ResetManager,
+    *,
+    seed: int,
+    pointer_position: Any,
+) -> EpisodeReset:
+    env.reset(seed=seed)
+    initialize_panda(env.unwrapped)
+    scenario.reset(np.random.default_rng(seed))
+    if task is not None:
+        target_position = scenario.initial_position("target")
+        goal_position = scenario.initial_position("goal")
+        task.reset(
+            initial_object_height_m=(
+                None
+                if target_position is None
+                else float(target_position[2])
+            ),
+            goal_position_xy_m=(
+                None if goal_position is None else goal_position[:2]
+            ),
+        )
+    tcp = single_env_vector(env.unwrapped.agent.tcp_pose.p)
+    reset_state = reset_manager.reset(tcp, pointer_position)
+    executor.reset(reset_state.target)
+    return EpisodeReset(
+        observation=capture_runtime_observation(
+            env.unwrapped, scenario
+        ),
+        target_height_m=reset_state.target_height_m,
+        target_depth_y_m=float(reset_state.target[1]),
+        gripper_target=1.0,
+        previous_safe_target=reset_state.target.copy(),
+    )
+
+
+def run(
+    config: AppConfig,
+    *,
+    max_steps: int | None = None,
+    max_episodes: int | None = None,
+) -> None:
+    if max_episodes is not None:
+        if max_episodes < 1:
+            raise ValueError("max_episodes must be at least 1")
+        if config.collection.source != "scripted_pick_place":
+            raise ValueError(
+                "max_episodes requires collection.source=scripted_pick_place"
+            )
     simulation = config.simulation
     env = gym.make(
         simulation.env_id,
@@ -208,6 +259,7 @@ def run(config: AppConfig, *, max_steps: int | None = None) -> None:
         env.reset(seed=simulation.seed)
         initialize_panda(env.unwrapped)
         scenario = build_scenario(env.unwrapped, config)
+        scenario.reset(np.random.default_rng(simulation.seed))
         _add_top_camera(env.unwrapped, config)
         _add_front_camera(env.unwrapped)
         controller_limit = _validate_runtime(env, config)
@@ -246,7 +298,25 @@ def run(config: AppConfig, *, max_steps: int | None = None) -> None:
             ),
             obstacle_margin_m=config.collision_protection.obstacle_margin_m,
         )
-        tcp = _single_env_vector(env.unwrapped.agent.tcp_pose.p)
+        executor = CommandExecutor(
+            servo=servo,
+            workspace_guard=guard,
+            scene_guard=scene_guard,
+            reachability=reachability,
+            controller_delta_limit_m=controller_limit,
+            previous_safe_target_weight=(
+                config.reachability.previous_safe_target_weight
+            ),
+            maximum_projected_target_step_m=(
+                config.reachability.maximum_projected_target_step_m
+            ),
+            collision_protection_enabled=(
+                config.collision_protection.enabled
+            ),
+        )
+        mouse_source = MouseActionSource()
+        tcp = single_env_vector(env.unwrapped.agent.tcp_pose.p)
+        executor.reset(tcp)
         markers = TargetMarkers(env.unwrapped.scene, tcp)
         reset_manager = ResetManager(
             config.reset.pointer_rearm_pixels,
@@ -254,7 +324,7 @@ def run(config: AppConfig, *, max_steps: int | None = None) -> None:
         )
         reset_state = reset_manager.reset(tcp, viewer.window.mouse_position)
         gripper_target = 1.0
-        last_safe_target = reset_state.target.copy()
+        executor.last_safe_target = reset_state.target.copy()
         previous_recorded_safe_target = reset_state.target.copy()
         target_height = reset_state.target_height_m
         target_depth_y = float(reset_state.target[1])
@@ -266,12 +336,34 @@ def run(config: AppConfig, *, max_steps: int | None = None) -> None:
                 config.cube_task,
                 float(scenario.cube_initial_position[2]),
             )
+            goal_position = scenario.goal_position
+            task.reset(
+                goal_position_xy_m=(
+                    None if goal_position is None else goal_position[:2]
+                )
+            )
+        scripted_source = ScriptedPickPlaceSource(
+            approach_clearance_m=config.cube_task.approach_clearance_m,
+            lift_height_m=config.cube_task.lift_height_m,
+        )
+        action_source = (
+            mouse_source
+            if config.collection.source == "mouse"
+            else scripted_source
+        )
+        observation = capture_runtime_observation(env.unwrapped, scenario)
 
         print(
-            "Demo 0 ready | move mouse: TCP target | space: gripper | "
-            "U/J: height/depth | 1: top XY | 2: front XZ | "
-            "3: wrist observe | r: reset | q: quit"
+            f"Demo 0 ready | source={config.collection.source} | "
+            "1: top XY | 2: front XZ | 3: wrist observe | "
+            "r: reset | q: quit"
         )
+        if config.collection.source == "mouse":
+            print("move mouse: TCP target | space: gripper | U/J: height/depth")
+        else:
+            print(
+                "scripted policy is driving the robot; camera keys remain active"
+            )
         print(
             f"action_space={env.action_space}, controller_delta_limit="
             f"{controller_limit:.3f} m"
@@ -288,11 +380,24 @@ def run(config: AppConfig, *, max_steps: int | None = None) -> None:
                 f"place_goal_xy={config.cube_task.goal_position_xy_m} | "
                 "approach, close, lift, move, lower, open"
             )
+            if config.cube_task.randomize_positions:
+                print(
+                    "position_randomization=enabled | "
+                    f"target_x={config.cube_task.target_x_bounds_m}, "
+                    f"target_y={config.cube_task.target_y_bounds_m}, "
+                    f"goal_x={config.cube_task.goal_x_bounds_m}, "
+                    f"goal_y={config.cube_task.goal_y_bounds_m}"
+                )
 
         with recorder_context as recorder:
             if recorder is not None:
                 print(f"recording_session={recorder.session_dir}")
             step = 0
+            episode_step = 0
+            completed_episodes = 0
+            episode_seed = simulation.seed
+            next_episode_seed = simulation.seed + 1
+            success_settle_steps = 0
             last_task_record: dict[str, Any] = {"task_phase": "not_started"}
             run_end_reason = "max_steps" if max_steps is not None else "session_end"
             while max_steps is None or step < max_steps:
@@ -312,7 +417,10 @@ def run(config: AppConfig, *, max_steps: int | None = None) -> None:
                 if window.key_press(config.input.quit_key):
                     run_end_reason = "quit"
                     break
-                if window.key_press(config.input.gripper_toggle_key):
+                if (
+                    config.collection.source == "mouse"
+                    and window.key_press(config.input.gripper_toggle_key)
+                ):
                     gripper_target *= -1.0
                 requested_view = view_selection.active_view
                 if window.key_press(config.input.top_view_key):
@@ -337,25 +445,35 @@ def run(config: AppConfig, *, max_steps: int | None = None) -> None:
                         recorder.rotate_episode(
                             "manual_reset", final_fields=last_task_record
                         )
-                    env.reset(seed=simulation.seed)
-                    initialize_panda(env.unwrapped)
-                    scenario.reset()
-                    guard.reset()
-                    if task is not None:
-                        task.reset()
-                    tcp = _single_env_vector(env.unwrapped.agent.tcp_pose.p)
-                    reset_state = reset_manager.reset(
-                        tcp, window.mouse_position
+                    reset = _reset_episode(
+                        env,
+                        scenario,
+                        executor,
+                        task,
+                        reset_manager,
+                        seed=next_episode_seed,
+                        pointer_position=window.mouse_position,
                     )
-                    last_safe_target = reset_state.target.copy()
-                    previous_recorded_safe_target = reset_state.target.copy()
-                    target_height = reset_state.target_height_m
-                    target_depth_y = float(reset_state.target[1])
-                    gripper_target = 1.0
+                    episode_seed = next_episode_seed
+                    next_episode_seed += 1
+                    observation = reset.observation
+                    previous_recorded_safe_target = (
+                        reset.previous_safe_target
+                    )
+                    target_height = reset.target_height_m
+                    target_depth_y = reset.target_depth_y_m
+                    gripper_target = reset.gripper_target
+                    scripted_source.reset()
+                    episode_step = 0
+                    success_settle_steps = 0
 
-                up_pressed = window.key_down(config.input.vertical_up_key)
-                down_pressed = window.key_down(
-                    config.input.vertical_down_key
+                up_pressed = (
+                    config.collection.source == "mouse"
+                    and window.key_down(config.input.vertical_up_key)
+                )
+                down_pressed = (
+                    config.collection.source == "mouse"
+                    and window.key_down(config.input.vertical_down_key)
                 )
                 vertical_active = up_pressed != down_pressed
                 if view_selection.active_view == 1:
@@ -397,119 +515,77 @@ def run(config: AppConfig, *, max_steps: int | None = None) -> None:
                     sample.pixel
                 ):
                     sample = PointerSample(sample.pixel, None, False)
-                tcp = _single_env_vector(env.unwrapped.agent.tcp_pose.p)
+                tcp = observation.tcp_position
                 command_candidate = (
                     sample.world_target
                     if sample.valid and sample.world_target is not None
                     else ResetManager.vertical_target(
-                        last_safe_target, target_height
+                        executor.last_safe_target, target_height
                     )
                     if vertical_active and view_selection.active_view == 1
                     else ResetManager.axis_target(
-                        last_safe_target, axis=1, value=target_depth_y
+                        executor.last_safe_target,
+                        axis=1,
+                        value=target_depth_y,
                     )
                     if vertical_active and view_selection.active_view == 2
                     else None
                 )
-                if command_candidate is not None:
-                    raw_target = command_candidate.copy()
-                    bounded_candidate = guard.clip_target(command_candidate)
-                    previous_on_plane = last_safe_target.copy()
-                    previous_on_plane[2] = bounded_candidate[2]
-                    origin_weight = (
-                        config.reachability.previous_safe_target_weight
-                    )
-                    projection_origin = (
-                        origin_weight * previous_on_plane
-                        + (1.0 - origin_weight) * tcp
-                    )
-                    reachability_projection = (
-                        reachability.project_continuous(
-                            projection_origin, bounded_candidate
+                if config.collection.source == "mouse":
+                    mouse_source.update(
+                        TaskSpaceCommand.create(
+                            target_position=(
+                                command_candidate
+                                if command_candidate is not None
+                                else executor.last_safe_target
+                            ),
+                            gripper_position=gripper_target,
+                            timestamp=time.monotonic(),
+                            source="human",
+                            valid=command_candidate is not None,
                         )
-                        if reachability is not None
-                        else None
                     )
-                    requested_target = (
-                        reachability_projection.target
-                        if reachability_projection is not None
-                        else bounded_candidate
-                    )
-                    projection_suppressed = False
-                    if (
-                        reachability is not None
-                        and reachability_projection is not None
-                        and reachability_projection.projected
-                    ):
-                        (
-                            requested_target,
-                            projection_suppressed,
-                        ) = reachability.limit_projected_target_step(
-                            previous_on_plane,
-                            requested_target,
-                            config.reachability.maximum_projected_target_step_m,
-                        )
-                    collision_result = None
-                    if config.collision_protection.enabled:
-                        collision_result = scene_guard.protect(
-                            requested_target,
-                            obstacles=scenario.obstacles,
-                        )
-                        requested_target = collision_result.target
-                    result = guard.update(requested_target, tcp)
-                    safe_target = result.target
-                    last_safe_target = safe_target.copy()
-                    target_height = float(safe_target[2])
-                    target_depth_y = float(safe_target[1])
-                else:
-                    result = None
-                    collision_result = None
-                    reachability_projection = None
-                    projection_origin = tcp.copy()
-                    projection_suppressed = False
-                    safe_target = last_safe_target
-                    raw_target = last_safe_target
-
-                metric_delta = servo.metric_delta(safe_target, tcp)
-                action = build_normalized_panda_action(
-                    metric_delta, gripper_target, controller_limit
+                command = action_source.act(observation)
+                gripper_target = command.gripper_position
+                execution = executor.prepare(
+                    command,
+                    observation,
+                    obstacles=scenario.obstacles,
                 )
+                raw_target = execution.raw_target
+                safe_target = execution.safe_target
+                action = execution.action
+                result = execution.guard_result
+                collision_result = execution.collision_result
+                reachability_projection = execution.reachability_projection
+                projection_origin = execution.projection_origin
+                projection_suppressed = execution.projection_suppressed
+                target_height = float(safe_target[2])
+                target_depth_y = float(safe_target[1])
                 _, _, terminated, truncated, _ = env.step(action)
                 markers.update(raw_target, safe_target)
-                force_sample = sample_contact_forces(
+                next_observation = capture_runtime_observation(
                     env.unwrapped, scenario
                 )
+                force_sample = next_observation.contact_forces
                 contact_force_n = force_sample.maximum_unintended_n
                 contact_emergency_stop = (
                     contact_force_n
                     > config.collision_protection.maximum_unintended_contact_force_n
                 )
                 if contact_emergency_stop:
-                    tcp = _single_env_vector(env.unwrapped.agent.tcp_pose.p)
-                    last_safe_target = tcp.copy()
-                    guard.reset()
+                    tcp = next_observation.tcp_position
+                    executor.emergency_stop(tcp)
 
-                cube_position = (
-                    _single_env_vector(scenario.cube.pose.p)
-                    if scenario.cube is not None
-                    else None
+                cube_position = next_observation.object_positions.get(
+                    "target"
                 )
                 is_grasped = (
-                    _single_env_bool(
-                        env.unwrapped.agent.is_grasping(scenario.cube)
-                    )
-                    if scenario.cube is not None
-                    else False
+                    "target" in next_observation.grasped_objects
                 )
                 task_observation = (
-                    TaskObservation(
-                        tcp_position=tcp,
-                        object_positions={"target": cube_position},
-                        grasped_objects=(
-                            frozenset({"target"})
-                            if is_grasped
-                            else frozenset()
-                        ),
+                    next_observation.task_observation(
+                        tcp_position=tcp
                     )
                     if cube_position is not None
                     else None
@@ -540,12 +616,21 @@ def run(config: AppConfig, *, max_steps: int | None = None) -> None:
                     and task_observation is not None
                     else ()
                 )
+                task_fields = task_fields + (
+                    ("source", command.source),
+                    (
+                        "policy phase",
+                        str(
+                            (command.metadata or {}).get(
+                                "policy_phase", "manual"
+                            )
+                        ),
+                    ),
+                )
                 status_panel.update(
                     RuntimeStatus.create(
                         active_view=view_selection.active_view,
-                        tcp_position=_single_env_vector(
-                            env.unwrapped.agent.tcp_pose.p
-                        ),
+                        tcp_position=next_observation.tcp_position,
                         contact_force_n=contact_force_n,
                         contact_threshold_n=(
                             config.collision_protection
@@ -578,6 +663,7 @@ def run(config: AppConfig, *, max_steps: int | None = None) -> None:
                     recorder.write(
                         {
                             "step": step,
+                            "episode_seed": episode_seed,
                             "timestamp": time.monotonic(),
                             "mouse_pixel": sample.pixel,
                             "input_valid": sample.valid,
@@ -589,6 +675,10 @@ def run(config: AppConfig, *, max_steps: int | None = None) -> None:
                             "actual_tcp_position": tcp,
                             "action": action,
                             "gripper_target": gripper_target,
+                            "action_source": command.source,
+                            "policy_phase": (
+                                (command.metadata or {}).get("policy_phase")
+                            ),
                             "saturation_state": (
                                 result.reason if result is not None else "input_invalid"
                             ),
@@ -636,6 +726,9 @@ def run(config: AppConfig, *, max_steps: int | None = None) -> None:
                             ),
                             "contact_emergency_stop": contact_emergency_stop,
                             "cube_position": cube_position,
+                            "cube_initial_position": (
+                                scenario.initial_position("target")
+                            ),
                             "is_grasped": is_grasped,
                             **task_record,
                             "goal_position": scenario.goal_position,
@@ -647,45 +740,101 @@ def run(config: AppConfig, *, max_steps: int | None = None) -> None:
                                     safe_target - previous_recorded_safe_target
                                 )
                             ),
-                            "qpos": _single_env_vector(
-                                env.unwrapped.agent.robot.get_qpos()
-                            ),
-                            "qvel": _single_env_vector(
-                                env.unwrapped.agent.robot.get_qvel()
-                            ),
+                            "qpos": next_observation.qpos,
+                            "qvel": next_observation.qvel,
                         }
                     )
                 previous_recorded_safe_target = safe_target.copy()
+                observation = next_observation
 
                 step += 1
-                if bool(np.asarray(terminated).any()) or bool(
-                    np.asarray(truncated).any()
+                episode_step += 1
+                if task_record.get("task_placed", False):
+                    success_settle_steps += 1
+                else:
+                    success_settle_steps = 0
+                automatic_reset_reason = None
+                if config.collection.source == "scripted_pick_place":
+                    if (
+                        success_settle_steps
+                        >= config.collection.success_settle_steps
+                    ):
+                        automatic_reset_reason = "success"
+                    elif (
+                        episode_step
+                        >= config.collection.max_episode_steps
+                    ):
+                        automatic_reset_reason = "policy_timeout"
+                terminated_now = bool(np.asarray(terminated).any())
+                truncated_now = bool(np.asarray(truncated).any())
+                if (
+                    automatic_reset_reason is not None
+                    or terminated_now
+                    or truncated_now
                 ):
-                    if recorder is not None:
-                        terminated_now = bool(np.asarray(terminated).any())
-                        recorder.rotate_episode(
-                            "terminated" if terminated_now else "truncated",
-                            final_fields=task_record,
-                        )
-                    env.reset(seed=simulation.seed)
-                    initialize_panda(env.unwrapped)
-                    scenario.reset()
-                    guard.reset()
-                    if task is not None:
-                        task.reset()
-                    tcp = _single_env_vector(env.unwrapped.agent.tcp_pose.p)
-                    reset_state = reset_manager.reset(
-                        tcp, window.mouse_position
+                    episode_end_reason = automatic_reset_reason or (
+                        "terminated" if terminated_now else "truncated"
                     )
-                    last_safe_target = reset_state.target.copy()
-                    previous_recorded_safe_target = reset_state.target.copy()
-                    target_height = reset_state.target_height_m
-                    target_depth_y = float(reset_state.target[1])
-                    gripper_target = 1.0
+                    if automatic_reset_reason is not None:
+                        completed_episodes += 1
+                    episode_limit_reached = (
+                        max_episodes is not None
+                        and completed_episodes >= max_episodes
+                    )
+                    if recorder is not None:
+                        if episode_limit_reached:
+                            recorder.end_episode(
+                                episode_end_reason,
+                                final_fields=task_record,
+                            )
+                        else:
+                            recorder.rotate_episode(
+                                episode_end_reason,
+                                final_fields=task_record,
+                            )
+                    if episode_limit_reached:
+                        run_end_reason = "episode_limit"
+                        break
+                    reset = _reset_episode(
+                        env,
+                        scenario,
+                        executor,
+                        task,
+                        reset_manager,
+                        seed=next_episode_seed,
+                        pointer_position=window.mouse_position,
+                    )
+                    episode_seed = next_episode_seed
+                    next_episode_seed += 1
+                    observation = reset.observation
+                    previous_recorded_safe_target = (
+                        reset.previous_safe_target
+                    )
+                    target_height = reset.target_height_m
+                    target_depth_y = reset.target_depth_y_m
+                    gripper_target = reset.gripper_target
+                    scripted_source.reset()
+                    episode_step = 0
+                    success_settle_steps = 0
             if recorder is not None:
                 recorder.end_episode(
                     run_end_reason, final_fields=last_task_record
                 )
+                session_dir = recorder.session_dir
+            else:
+                session_dir = None
+        if (
+            session_dir is not None
+            and config.collection.source == "scripted_pick_place"
+        ):
+            report = write_session_report(session_dir)
+            print(
+                "session_summary="
+                f"{report['success_count']}/{report['episode_count']} success "
+                f"({report['success_rate']:.1%}), "
+                f"reasons={report['end_reasons']}"
+            )
+            print(f"session_report={session_dir / 'summary.json'}")
     finally:
         env.close()
 
@@ -699,6 +848,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Path to the Demo 0 YAML configuration.",
     )
     parser.add_argument(
+        "--episodes",
+        type=int,
+        default=None,
+        help=(
+            "Stop after N scripted episodes and write summary.json."
+        ),
+    )
+    parser.add_argument(
         "--max-steps",
         type=int,
         default=None,
@@ -709,7 +866,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    run(load_config(args.config), max_steps=args.max_steps)
+    run(
+        load_config(args.config),
+        max_steps=args.max_steps,
+        max_episodes=args.episodes,
+    )
 
 
 if __name__ == "__main__":

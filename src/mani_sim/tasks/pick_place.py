@@ -58,7 +58,18 @@ class PickPlaceTask:
             place_height_tolerance_m=config.place_height_tolerance_m,
         )
 
-    def reset(self) -> None:
+    def reset(
+        self,
+        *,
+        initial_object_height_m: float | None = None,
+        goal_position_xy_m: tuple[float, float] | np.ndarray | None = None,
+    ) -> None:
+        if initial_object_height_m is not None:
+            self.initial_object_height_m = float(initial_object_height_m)
+        if goal_position_xy_m is not None:
+            self.goal_position_xy_m = np.asarray(
+                goal_position_xy_m, dtype=np.float64
+            ).copy()
         self.approached = False
         self.ever_grasped = False
         self.lifted = False

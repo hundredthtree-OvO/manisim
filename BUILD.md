@@ -1,5 +1,8 @@
 # mani-sim 构建与开发说明
 
+人工采集之后的自动采集、RoboCasa 资产、多任务、策略介入和学习路线见
+[RESEARCH_ROADMAP.md](RESEARCH_ROADMAP.md)。
+
 ## 1. 项目目标
 
 基于 ManiSkill 3 构建可复用的单臂研究脚手架，用于：
@@ -250,6 +253,9 @@ raw pointer target
 ```text
 src/mani_sim/
 ├── app.py
+├── action_sources/
+│   ├── base.py
+│   └── mouse.py
 ├── assets/
 │   ├── object_spec.py
 │   └── object_factory.py
@@ -259,6 +265,9 @@ src/mani_sim/
 │   ├── base.py
 │   └── pick_place.py
 ├── runtime/
+│   ├── command_executor.py
+│   ├── observation.py
+│   ├── contact_forces.py
 │   └── reset_manager.py
 ├── control/
 ├── input/
@@ -276,6 +285,9 @@ src/mani_sim/
 
 ```text
 App                 运行时编排
+ActionSource        根据 observation 产生 canonical task-space command
+CommandExecutor     统一执行可达、碰撞、stall、servo 和 action 转换
+RuntimeObservation  Task、UI、record 和未来策略共用的单帧状态
 Scenario            实体注册、查询和复位
 ObjectFactory       根据规格创建 actor
 Task                阶段、成功判据和任务记录字段
@@ -285,6 +297,27 @@ EpisodeRecorder     运行时记录接口
 
 现有 `task_scene.py` 和 `task_progress.py` 只保留兼容导出。后续新增物体不应
 写入任务状态机；新增任务也不应直接读取鼠标或调用 `env.step()`。
+
+当前人工模式已接入统一链路：
+
+```text
+MouseActionSource
+-> TaskSpaceCommand(source=human)
+-> CommandExecutor
+-> env.step
+-> RuntimeObservation
+-> Task / UI / EpisodeRecorder
+```
+
+配置入口为：
+
+```yaml
+collection:
+  source: mouse
+```
+
+当前只开放 `mouse`；下一阶段加入 `scripted_pick_place` 时，不修改安全和
+控制执行链。每帧记录新增 `action_source`，旧字段保持兼容。
 
 目标演进：
 
@@ -390,9 +423,9 @@ SAPIEN UI 没有现成 plot widget，因此采用轻量栅格图最稳定：原�
 最新验证：
 
 ```text
-普通测试：47 passed，3 GPU tests skipped
+普通测试：54 passed，4 GPU tests skipped
 RTX 4070 SUPER：4 physical/render integration tests passed
-GUI：10-step force history + session recording smoke passed
+GUI：100-step refactored manual-control smoke passed
 ```
 
 关键结果：
@@ -410,12 +443,31 @@ GUI：10-step force history + session recording smoke passed
 
 ## 12. 后续路线
 
+本阶段已完成单环境 `ScriptedPickPlaceSource`：
+
+- `collection.source` 可选 `mouse` 或 `scripted_pick_place`；
+- 人工与自动模式共用 observation、canonical command、安全执行链和 recorder；
+- 自动模式保留 TOP/FRONT/WRIST、状态面板和 Force monitor 可视化；
+- 状态与逐帧记录包含 `action_source` 和 `policy_phase`；
+- 成功稳定后自动开启下一 episode，超时记录为 `policy_timeout`；
+- 700 步真实 GUI 回归完成 2 条连续成功 episode，每条 290 步，最终
+  方块到目标中心误差约 1.53 mm。
+
+随后完成第一层 task randomization 与批量统计：
+
+- 每条 episode 使用独立 seed 随机化 cube XY 和 goal XY；
+- 随机范围限制在当前低位可达区域，并约束起点/目标最小间距；
+- `--episodes N` 支持连续可视化采集 N 条后自动退出；
+- session 自动生成 `summary.json`，统计成功率、结束原因、阶段耗时和三类力；
+- `mani-sim-report runs/<session-id>` 可离线重算；
+- 5 条随机位置真实 GUI/PhysX 回归为 `5/5` 成功，平均 279 步，非预期
+  接触力峰值 `0 N`。
+
 建议顺序：
 
-1. 将指尖/物体/障碍接触力作为正式 schema 字段记录；
-2. 先离线检查量级、噪声、坐标系和阈值，再实现 3–5 秒 UI 曲线；
-3. 增加 yaw，保持 roll/pitch 固定；
-4. 增加 Push 任务和任务专用姿态预设；
-5. Pull/Drawer 阶段加入水平抓取姿态；
-6. 复杂障碍增加整臂距离查询或运动规划；
-7. 最后再进入完整 6D 位姿控制。
+1. 将随机位置批次扩大到 50～100 条，建立首个稳定基线；
+2. 加入 top/front/wrist 图像记录；
+3. 再逐项加入 cube 尺寸、质量和摩擦随机化，单变量评估失败边界；
+4. 将已验证的自动策略和任务状态改为 batch-aware；
+5. 再进入 RoboCasa 物体/receptacle 和人工轨迹并行重放；
+6. 根据学习目标进入 SmolVLA、鼠标介入或 RL。

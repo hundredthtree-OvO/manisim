@@ -42,7 +42,9 @@ recording:
   path: runs
 
 collection:
-  source: mouse
+  source: scripted_pick_place
+  max_episode_steps: 800
+  success_settle_steps: 25
 
 reachability:
   enabled: true
@@ -65,6 +67,12 @@ cube_task:
   goal_position_xy_m: [0.30, 0.30]
   goal_tolerance_m: 0.04
   place_height_tolerance_m: 0.015
+  randomize_positions: true
+  target_x_bounds_m: [0.38, 0.52]
+  target_y_bounds_m: [-0.12, 0.12]
+  goal_x_bounds_m: [0.25, 0.40]
+  goal_y_bounds_m: [0.18, 0.34]
+  minimum_start_goal_distance_m: 0.18
 
 collision_protection:
   enabled: true

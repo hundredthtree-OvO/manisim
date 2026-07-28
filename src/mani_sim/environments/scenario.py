@@ -11,6 +11,37 @@ from mani_sim.config import AppConfig
 from mani_sim.control.scene_collision_guard import AxisAlignedBox
 
 
+@dataclass(frozen=True)
+class PositionRandomization:
+    target_x_bounds_m: tuple[float, float]
+    target_y_bounds_m: tuple[float, float]
+    goal_x_bounds_m: tuple[float, float]
+    goal_y_bounds_m: tuple[float, float]
+    minimum_distance_m: float
+
+    def sample(
+        self, rng: np.random.Generator
+    ) -> tuple[np.ndarray, np.ndarray]:
+        for _ in range(1000):
+            target = np.array(
+                [
+                    rng.uniform(*self.target_x_bounds_m),
+                    rng.uniform(*self.target_y_bounds_m),
+                ]
+            )
+            goal = np.array(
+                [
+                    rng.uniform(*self.goal_x_bounds_m),
+                    rng.uniform(*self.goal_y_bounds_m),
+                ]
+            )
+            if np.linalg.norm(target - goal) >= self.minimum_distance_m:
+                return target, goal
+        raise ValueError(
+            "position randomization bounds cannot satisfy minimum distance"
+        )
+
+
 @dataclass
 class Scenario:
     """Scene entity registry and reset boundary, independent of task logic."""
@@ -18,6 +49,7 @@ class Scenario:
     actors: dict[str, Any] = field(default_factory=dict)
     initial_positions: dict[str, np.ndarray] = field(default_factory=dict)
     obstacles: tuple[AxisAlignedBox, ...] = ()
+    position_randomization: PositionRandomization | None = None
 
     def actor(self, name: str) -> Any | None:
         return self.actors.get(name)
@@ -26,7 +58,11 @@ class Scenario:
         position = self.initial_positions.get(name)
         return None if position is None else position.copy()
 
-    def reset(self) -> None:
+    def reset(self, rng: np.random.Generator | None = None) -> None:
+        if self.position_randomization is not None and rng is not None:
+            target_xy, goal_xy = self.position_randomization.sample(rng)
+            self.initial_positions["target"][:2] = target_xy
+            self.initial_positions["goal"][:2] = goal_xy
         for name, position in self.initial_positions.items():
             actor = self.actors.get(name)
             if actor is not None:
@@ -99,6 +135,14 @@ def build_scenario(base_env: Any, config: AppConfig) -> Scenario:
         scene.initial_positions["goal"] = np.asarray(
             goal_position, dtype=np.float64
         )
+        if task.randomize_positions:
+            scene.position_randomization = PositionRandomization(
+                target_x_bounds_m=task.target_x_bounds_m,
+                target_y_bounds_m=task.target_y_bounds_m,
+                goal_x_bounds_m=task.goal_x_bounds_m,
+                goal_y_bounds_m=task.goal_y_bounds_m,
+                minimum_distance_m=task.minimum_start_goal_distance_m,
+            )
 
     collision = config.collision_protection
     if collision.enabled and collision.obstacle_enabled:

@@ -63,6 +63,13 @@ class RecordingConfig:
 
 
 @dataclass(frozen=True)
+class CollectionConfig:
+    source: str = "mouse"
+    max_episode_steps: int = 800
+    success_settle_steps: int = 25
+
+
+@dataclass(frozen=True)
 class ReachabilityConfig:
     enabled: bool = True
     path: str = "calibrations/panda_fixed_orientation.json"
@@ -88,6 +95,12 @@ class CubeTaskConfig:
     goal_position_xy_m: tuple[float, float] = (0.30, 0.30)
     goal_tolerance_m: float = 0.04
     place_height_tolerance_m: float = 0.015
+    randomize_positions: bool = False
+    target_x_bounds_m: tuple[float, float] = (0.38, 0.52)
+    target_y_bounds_m: tuple[float, float] = (-0.12, 0.12)
+    goal_x_bounds_m: tuple[float, float] = (0.25, 0.40)
+    goal_y_bounds_m: tuple[float, float] = (0.18, 0.34)
+    minimum_start_goal_distance_m: float = 0.18
 
 
 @dataclass(frozen=True)
@@ -109,6 +122,7 @@ class AppConfig:
     input: InputConfig = field(default_factory=InputConfig)
     camera: CameraConfig = field(default_factory=CameraConfig)
     recording: RecordingConfig = field(default_factory=RecordingConfig)
+    collection: CollectionConfig = field(default_factory=CollectionConfig)
     reachability: ReachabilityConfig = field(default_factory=ReachabilityConfig)
     reset: ResetConfig = field(default_factory=ResetConfig)
     cube_task: CubeTaskConfig = field(default_factory=CubeTaskConfig)
@@ -143,6 +157,7 @@ def load_config(path: str | Path) -> AppConfig:
     input_config = raw.get("input", {})
     camera = raw.get("camera", {})
     recording = raw.get("recording", {})
+    collection = raw.get("collection", {})
     reachability = raw.get("reachability", {})
     reset = raw.get("reset", {})
     cube_task = raw.get("cube_task", {})
@@ -171,6 +186,7 @@ def load_config(path: str | Path) -> AppConfig:
         input=InputConfig(**input_config),
         camera=CameraConfig(**camera),
         recording=RecordingConfig(**recording),
+        collection=CollectionConfig(**collection),
         reachability=ReachabilityConfig(**reachability),
         reset=ResetConfig(**reset),
         cube_task=CubeTaskConfig(
@@ -206,6 +222,46 @@ def load_config(path: str | Path) -> AppConfig:
                 cube_task.get(
                     "place_height_tolerance_m",
                     CubeTaskConfig.place_height_tolerance_m,
+                )
+            ),
+            randomize_positions=bool(
+                cube_task.get(
+                    "randomize_positions",
+                    CubeTaskConfig.randomize_positions,
+                )
+            ),
+            target_x_bounds_m=_pair(
+                cube_task.get(
+                    "target_x_bounds_m",
+                    CubeTaskConfig.target_x_bounds_m,
+                ),
+                "cube_task.target_x_bounds_m",
+            ),
+            target_y_bounds_m=_pair(
+                cube_task.get(
+                    "target_y_bounds_m",
+                    CubeTaskConfig.target_y_bounds_m,
+                ),
+                "cube_task.target_y_bounds_m",
+            ),
+            goal_x_bounds_m=_pair(
+                cube_task.get(
+                    "goal_x_bounds_m",
+                    CubeTaskConfig.goal_x_bounds_m,
+                ),
+                "cube_task.goal_x_bounds_m",
+            ),
+            goal_y_bounds_m=_pair(
+                cube_task.get(
+                    "goal_y_bounds_m",
+                    CubeTaskConfig.goal_y_bounds_m,
+                ),
+                "cube_task.goal_y_bounds_m",
+            ),
+            minimum_start_goal_distance_m=float(
+                cube_task.get(
+                    "minimum_start_goal_distance_m",
+                    CubeTaskConfig.minimum_start_goal_distance_m,
                 )
             ),
         ),
@@ -260,6 +316,23 @@ def load_config(path: str | Path) -> AppConfig:
 
 
 def _validate(config: AppConfig) -> None:
+    if config.collection.source not in {"mouse", "scripted_pick_place"}:
+        raise ValueError(
+            "collection.source must be mouse or scripted_pick_place"
+        )
+    if config.collection.max_episode_steps < 1:
+        raise ValueError("collection.max_episode_steps must be at least 1")
+    if config.collection.success_settle_steps < 1:
+        raise ValueError(
+            "collection.success_settle_steps must be at least 1"
+        )
+    if (
+        config.collection.source == "scripted_pick_place"
+        and not config.cube_task.enabled
+    ):
+        raise ValueError(
+            "scripted_pick_place requires cube_task.enabled"
+        )
     if config.servo.gain <= 0:
         raise ValueError("servo.gain must be positive")
     if config.servo.max_delta_m <= 0:
@@ -308,6 +381,41 @@ def _validate(config: AppConfig) -> None:
         raise ValueError(
             "cube_task.place_height_tolerance_m must be positive"
         )
+    if config.cube_task.minimum_start_goal_distance_m < 0:
+        raise ValueError(
+            "cube_task.minimum_start_goal_distance_m must not be negative"
+        )
+    if config.cube_task.randomize_positions:
+        randomized_bounds = (
+            (
+                config.cube_task.target_x_bounds_m,
+                config.workspace.x_bounds_m,
+                "target_x_bounds_m",
+            ),
+            (
+                config.cube_task.goal_x_bounds_m,
+                config.workspace.x_bounds_m,
+                "goal_x_bounds_m",
+            ),
+            (
+                config.cube_task.target_y_bounds_m,
+                config.workspace.y_bounds_m,
+                "target_y_bounds_m",
+            ),
+            (
+                config.cube_task.goal_y_bounds_m,
+                config.workspace.y_bounds_m,
+                "goal_y_bounds_m",
+            ),
+        )
+        for bounds, workspace_bounds, name in randomized_bounds:
+            if (
+                bounds[0] < workspace_bounds[0]
+                or bounds[1] > workspace_bounds[1]
+            ):
+                raise ValueError(
+                    f"cube_task.{name} must lie within workspace bounds"
+                )
     collision = config.collision_protection
     if collision.ground_tcp_clearance_m < 0:
         raise ValueError(
