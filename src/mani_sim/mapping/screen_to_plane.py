@@ -24,6 +24,10 @@ def screen_to_world_ray(
     x, y = pixel
     projection = np.asarray(projection_matrix, dtype=np.float64)
     model = np.asarray(camera_model_matrix, dtype=np.float64)
+    if projection.shape == (1, 4, 4):
+        projection = projection[0]
+    if model.shape == (1, 4, 4):
+        model = model[0]
     if projection.shape != (4, 4) or model.shape != (4, 4):
         raise ValueError("camera matrices must both have shape (4, 4)")
     if abs(projection[0, 0]) < 1e-12 or abs(projection[1, 1]) < 1e-12:
@@ -62,6 +66,30 @@ def intersect_horizontal_plane(
     if abs(direction_array[2]) <= parallel_epsilon:
         return None
     distance = (float(height_m) - origin_array[2]) / direction_array[2]
+    if distance <= 0:
+        return None
+    return origin_array + distance * direction_array
+
+
+def intersect_axis_plane(
+    origin: ArrayLike,
+    direction: ArrayLike,
+    *,
+    axis: int,
+    value: float,
+    parallel_epsilon: float = 1e-8,
+) -> NDArray[np.float64] | None:
+    """Return the forward ray intersection with one world-axis plane."""
+
+    if axis not in (0, 1, 2):
+        raise ValueError("axis must be 0, 1, or 2")
+    origin_array = np.asarray(origin, dtype=np.float64)
+    direction_array = np.asarray(direction, dtype=np.float64)
+    if origin_array.shape != (3,) or direction_array.shape != (3,):
+        raise ValueError("origin and direction must have shape (3,)")
+    if abs(direction_array[axis]) <= parallel_epsilon:
+        return None
+    distance = (float(value) - origin_array[axis]) / direction_array[axis]
     if distance <= 0:
         return None
     return origin_array + distance * direction_array

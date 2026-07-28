@@ -7,7 +7,7 @@ simulation:
 
 workspace:
   work_height_m: 0.45
-  z_bounds_m: [0.05, 0.65]
+  z_bounds_m: [0.02, 0.65]
   x_bounds_m: [0.15, 0.75]
   y_bounds_m: [-0.55, 0.55]
 
@@ -47,3 +47,27 @@ reachability:
   maximum_height_delta_m: 0.001
   previous_safe_target_weight: 0.7
   maximum_projected_target_step_m: 0.03
+
+reset:
+  policy: hold_tcp
+  pointer_rearm_pixels: 3.0
+  pointer_settle_steps: 2
+
+cube_task:
+  enabled: true
+  position_xy_m: [0.45, 0.0]
+  size_m: 0.04
+  approach_clearance_m: 0.08
+  lift_height_m: 0.10
+  goal_position_xy_m: [0.30, 0.30]
+  goal_tolerance_m: 0.04
+  place_height_tolerance_m: 0.015
+
+collision_protection:
+  enabled: true
+  ground_tcp_clearance_m: 0.015
+  obstacle_margin_m: 0.02
+  maximum_unintended_contact_force_n: 8.0
+  obstacle_enabled: false
+  obstacle_center_m: [0.58, 0.25, 0.05]
+  obstacle_size_m: [0.10, 0.10, 0.10]

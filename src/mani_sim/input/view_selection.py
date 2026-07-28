@@ -4,7 +4,7 @@ import numpy as np
 
 
 class ViewSelection:
-    """Tracks the highlighted view and safely rearms the top control viewport."""
+    """Tracks active control/observe views and safely rearms pointer input."""
 
     def __init__(self, rearm_distance_px: float = 3.0):
         self.active_view = 1
@@ -17,11 +17,11 @@ class ViewSelection:
         if view == self.active_view:
             return
         self.active_view = view
-        if view == 1:
+        if view in (1, 2):
             self._rearm_pixel = np.asarray(mouse_pixel, dtype=np.float64)
 
     def accepts_pointer(self, mouse_pixel: tuple[float, float]) -> bool:
-        if self.active_view != 1:
+        if self.active_view not in (1, 2):
             return False
         if self._rearm_pixel is None:
             return True

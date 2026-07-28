@@ -46,12 +46,16 @@ class WorkspaceGuard:
         self._low_progress_steps = 0
         self._saturated = False
 
-    def update(self, requested_target: ArrayLike, tcp_position: ArrayLike) -> GuardResult:
+    def clip_target(self, requested_target: ArrayLike) -> NDArray[np.float64]:
         target = np.asarray(requested_target, dtype=np.float64).copy()
-        tcp = np.asarray(tcp_position, dtype=np.float64)
         target[0] = np.clip(target[0], *self.x_bounds_m)
         target[1] = np.clip(target[1], *self.y_bounds_m)
         target[2] = np.clip(target[2], *self.z_bounds_m)
+        return target
+
+    def update(self, requested_target: ArrayLike, tcp_position: ArrayLike) -> GuardResult:
+        target = self.clip_target(requested_target)
+        tcp = np.asarray(tcp_position, dtype=np.float64)
 
         if self._saturated:
             assert self._saturation_target is not None

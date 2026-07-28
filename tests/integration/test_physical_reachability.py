@@ -64,6 +64,7 @@ def test_calibrated_targets_are_reached_by_physical_pd_loop() -> None:
         for target in targets:
             env.reset(seed=0)
             initialize_panda(env.unwrapped)
+            assert abs(float(_tcp(env)[2]) - 0.45) < 0.002
             for _ in range(240):
                 delta = servo.metric_delta(target, _tcp(env))
                 action = build_normalized_panda_action(delta, 1.0, 0.1)

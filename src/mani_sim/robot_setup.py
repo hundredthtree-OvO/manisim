@@ -6,11 +6,11 @@ import numpy as np
 PANDA_SAFE_QPOS = np.array(
     [
         0.0,
-        np.pi / 8,
+        0.17212291,
         0.0,
-        -np.pi * 5 / 8,
+        -1.53357124,
         0.0,
-        np.pi * 3 / 4,
+        1.70569408,
         np.pi / 4,
         0.04,
         0.04,
@@ -20,6 +20,6 @@ PANDA_SAFE_QPOS = np.array(
 
 
 def initialize_panda(base_env: object) -> None:
-    """Reset Panda to ManiSkill's standard tabletop-safe joint configuration."""
+    """Reset Panda to the fixed downward pose with TCP at about z=0.45 m."""
 
     base_env.agent.reset(PANDA_SAFE_QPOS)

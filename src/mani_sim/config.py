@@ -19,7 +19,7 @@ class SimulationConfig:
 @dataclass(frozen=True)
 class WorkspaceConfig:
     work_height_m: float = 0.45
-    z_bounds_m: tuple[float, float] = (0.05, 0.65)
+    z_bounds_m: tuple[float, float] = (0.02, 0.65)
     x_bounds_m: tuple[float, float] = (0.15, 0.75)
     y_bounds_m: tuple[float, float] = (-0.55, 0.55)
 
@@ -72,6 +72,36 @@ class ReachabilityConfig:
 
 
 @dataclass(frozen=True)
+class ResetConfig:
+    policy: str = "hold_tcp"
+    pointer_rearm_pixels: float = 3.0
+    pointer_settle_steps: int = 2
+
+
+@dataclass(frozen=True)
+class CubeTaskConfig:
+    enabled: bool = True
+    position_xy_m: tuple[float, float] = (0.45, 0.0)
+    size_m: float = 0.04
+    approach_clearance_m: float = 0.08
+    lift_height_m: float = 0.10
+    goal_position_xy_m: tuple[float, float] = (0.30, 0.30)
+    goal_tolerance_m: float = 0.04
+    place_height_tolerance_m: float = 0.015
+
+
+@dataclass(frozen=True)
+class CollisionProtectionConfig:
+    enabled: bool = True
+    ground_tcp_clearance_m: float = 0.015
+    obstacle_margin_m: float = 0.02
+    maximum_unintended_contact_force_n: float = 8.0
+    obstacle_enabled: bool = False
+    obstacle_center_m: tuple[float, float, float] = (0.58, 0.25, 0.05)
+    obstacle_size_m: tuple[float, float, float] = (0.10, 0.10, 0.10)
+
+
+@dataclass(frozen=True)
 class AppConfig:
     simulation: SimulationConfig = field(default_factory=SimulationConfig)
     workspace: WorkspaceConfig = field(default_factory=WorkspaceConfig)
@@ -80,6 +110,11 @@ class AppConfig:
     camera: CameraConfig = field(default_factory=CameraConfig)
     recording: RecordingConfig = field(default_factory=RecordingConfig)
     reachability: ReachabilityConfig = field(default_factory=ReachabilityConfig)
+    reset: ResetConfig = field(default_factory=ResetConfig)
+    cube_task: CubeTaskConfig = field(default_factory=CubeTaskConfig)
+    collision_protection: CollisionProtectionConfig = field(
+        default_factory=CollisionProtectionConfig
+    )
 
 
 def _pair(value: Any, name: str) -> tuple[float, float]:
@@ -89,6 +124,12 @@ def _pair(value: Any, name: str) -> tuple[float, float]:
     if pair[0] >= pair[1]:
         raise ValueError(f"{name} lower bound must be smaller than upper bound")
     return pair
+
+
+def _vector(value: Any, name: str, length: int) -> tuple[float, ...]:
+    if not isinstance(value, (list, tuple)) or len(value) != length:
+        raise ValueError(f"{name} must contain exactly {length} numbers")
+    return tuple(float(item) for item in value)
 
 
 def load_config(path: str | Path) -> AppConfig:
@@ -103,6 +144,9 @@ def load_config(path: str | Path) -> AppConfig:
     camera = raw.get("camera", {})
     recording = raw.get("recording", {})
     reachability = raw.get("reachability", {})
+    reset = raw.get("reset", {})
+    cube_task = raw.get("cube_task", {})
+    collision = raw.get("collision_protection", {})
 
     config = AppConfig(
         simulation=SimulationConfig(**sim),
@@ -128,6 +172,88 @@ def load_config(path: str | Path) -> AppConfig:
         camera=CameraConfig(**camera),
         recording=RecordingConfig(**recording),
         reachability=ReachabilityConfig(**reachability),
+        reset=ResetConfig(**reset),
+        cube_task=CubeTaskConfig(
+            enabled=bool(cube_task.get("enabled", CubeTaskConfig.enabled)),
+            position_xy_m=_vector(
+                cube_task.get("position_xy_m", CubeTaskConfig.position_xy_m),
+                "cube_task.position_xy_m",
+                2,
+            ),
+            size_m=float(cube_task.get("size_m", CubeTaskConfig.size_m)),
+            approach_clearance_m=float(
+                cube_task.get(
+                    "approach_clearance_m", CubeTaskConfig.approach_clearance_m
+                )
+            ),
+            lift_height_m=float(
+                cube_task.get("lift_height_m", CubeTaskConfig.lift_height_m)
+            ),
+            goal_position_xy_m=_vector(
+                cube_task.get(
+                    "goal_position_xy_m",
+                    CubeTaskConfig.goal_position_xy_m,
+                ),
+                "cube_task.goal_position_xy_m",
+                2,
+            ),
+            goal_tolerance_m=float(
+                cube_task.get(
+                    "goal_tolerance_m", CubeTaskConfig.goal_tolerance_m
+                )
+            ),
+            place_height_tolerance_m=float(
+                cube_task.get(
+                    "place_height_tolerance_m",
+                    CubeTaskConfig.place_height_tolerance_m,
+                )
+            ),
+        ),
+        collision_protection=CollisionProtectionConfig(
+            enabled=bool(
+                collision.get("enabled", CollisionProtectionConfig.enabled)
+            ),
+            ground_tcp_clearance_m=float(
+                collision.get(
+                    "ground_tcp_clearance_m",
+                    CollisionProtectionConfig.ground_tcp_clearance_m,
+                )
+            ),
+            obstacle_margin_m=float(
+                collision.get(
+                    "obstacle_margin_m",
+                    CollisionProtectionConfig.obstacle_margin_m,
+                )
+            ),
+            maximum_unintended_contact_force_n=float(
+                collision.get(
+                    "maximum_unintended_contact_force_n",
+                    CollisionProtectionConfig.maximum_unintended_contact_force_n,
+                )
+            ),
+            obstacle_enabled=bool(
+                collision.get(
+                    "obstacle_enabled",
+                    CollisionProtectionConfig.obstacle_enabled,
+                )
+            ),
+            obstacle_center_m=_vector(
+                collision.get(
+                    "obstacle_center_m",
+                    CollisionProtectionConfig.obstacle_center_m,
+                ),
+                "collision_protection.obstacle_center_m",
+                3,
+            ),
+            obstacle_size_m=_vector(
+                collision.get(
+                    "obstacle_size_m",
+                    CollisionProtectionConfig.obstacle_size_m,
+                ),
+                "collision_protection.obstacle_size_m",
+                3,
+            ),
+        ),
     )
     _validate(config)
     return config
@@ -154,6 +280,12 @@ def _validate(config: AppConfig) -> None:
         )
     if config.input.vertical_speed_mps <= 0:
         raise ValueError("input.vertical_speed_mps must be positive")
+    if config.reset.policy != "hold_tcp":
+        raise ValueError("reset.policy currently only supports hold_tcp")
+    if config.reset.pointer_rearm_pixels < 0:
+        raise ValueError("reset.pointer_rearm_pixels must not be negative")
+    if config.reset.pointer_settle_steps < 0:
+        raise ValueError("reset.pointer_settle_steps must not be negative")
     if not (
         config.workspace.z_bounds_m[0]
         <= config.workspace.work_height_m
@@ -164,3 +296,33 @@ def _validate(config: AppConfig) -> None:
         raise ValueError("camera.height_above_work_plane_m must be positive")
     if not 0 < config.camera.vertical_fov_rad < 3.14:
         raise ValueError("camera.vertical_fov_rad must be between 0 and pi")
+    if config.cube_task.size_m <= 0:
+        raise ValueError("cube_task.size_m must be positive")
+    if config.cube_task.approach_clearance_m <= 0:
+        raise ValueError("cube_task.approach_clearance_m must be positive")
+    if config.cube_task.lift_height_m <= 0:
+        raise ValueError("cube_task.lift_height_m must be positive")
+    if config.cube_task.goal_tolerance_m <= 0:
+        raise ValueError("cube_task.goal_tolerance_m must be positive")
+    if config.cube_task.place_height_tolerance_m <= 0:
+        raise ValueError(
+            "cube_task.place_height_tolerance_m must be positive"
+        )
+    collision = config.collision_protection
+    if collision.ground_tcp_clearance_m < 0:
+        raise ValueError(
+            "collision_protection.ground_tcp_clearance_m must not be negative"
+        )
+    if collision.obstacle_margin_m < 0:
+        raise ValueError(
+            "collision_protection.obstacle_margin_m must not be negative"
+        )
+    if collision.maximum_unintended_contact_force_n <= 0:
+        raise ValueError(
+            "collision_protection.maximum_unintended_contact_force_n "
+            "must be positive"
+        )
+    if any(size <= 0 for size in collision.obstacle_size_m):
+        raise ValueError(
+            "collision_protection.obstacle_size_m values must be positive"
+        )

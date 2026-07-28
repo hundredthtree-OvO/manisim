@@ -20,6 +20,27 @@ def test_guard_clips_coarse_workspace() -> None:
     np.testing.assert_allclose(result.target, [0.8, -0.5, 0.4])
 
 
+def test_front_xz_raw_height_is_clipped_before_reachability() -> None:
+    guard = WorkspaceGuard(
+        x_bounds_m=(0.15, 0.75),
+        y_bounds_m=(-0.55, 0.55),
+        work_height_m=0.45,
+        z_bounds_m=(0.02, 0.65),
+        progress_epsilon_m=0.001,
+        saturation_steps=2,
+        saturation_distance_m=0.03,
+        release_target_delta_m=0.04,
+    )
+    np.testing.assert_allclose(
+        guard.clip_target([0.45, 0.0, -0.191]),
+        [0.45, 0.0, 0.02],
+    )
+    np.testing.assert_allclose(
+        guard.clip_target([0.45, 0.0, 0.9]),
+        [0.45, 0.0, 0.65],
+    )
+
+
 def test_guard_saturates_after_repeated_stall() -> None:
     guard = make_guard()
     target = [0.8, 0, 0.4]

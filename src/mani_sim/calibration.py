@@ -250,6 +250,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=float,
         nargs="+",
         default=[
+            0.02,
             0.05,
             0.10,
             0.15,

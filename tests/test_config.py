@@ -9,6 +9,12 @@ def test_demo_config_loads() -> None:
     config = load_config(Path("configs/demo0.yaml"))
     assert config.simulation.control_mode == "pd_ee_delta_pos"
     assert config.workspace.work_height_m == 0.45
+    assert config.reset.policy == "hold_tcp"
+    assert config.reset.pointer_rearm_pixels == 3.0
+    assert config.reset.pointer_settle_steps == 2
+    assert config.cube_task.position_xy_m == (0.45, 0.0)
+    assert config.cube_task.goal_position_xy_m == (0.30, 0.30)
+    assert not config.collision_protection.obstacle_enabled
 
 
 def test_invalid_workspace_bounds_fail(tmp_path: Path) -> None:

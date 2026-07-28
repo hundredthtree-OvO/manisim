@@ -9,11 +9,14 @@ class AuxiliaryCameraPanel(Plugin):
 
     def __init__(
         self,
+        top_camera_name: str = "top_observer",
         front_camera_name: str = "front_observer",
         wrist_camera_name: str = "hand_camera",
         panel_width: int = 360,
     ):
-        self.camera_names = (front_camera_name, wrist_camera_name)
+        self.top_camera_name = top_camera_name
+        self.front_camera_name = front_camera_name
+        self.wrist_camera_name = wrist_camera_name
         self.panel_width = panel_width
         self.panel_height = 610
         self.active_view = 1
@@ -39,6 +42,17 @@ class AuxiliaryCameraPanel(Plugin):
             None,
         )
 
+    def displayed_cameras(self) -> tuple[tuple[str, str, int], ...]:
+        first = (
+            (self.top_camera_name, "1: TOP XY (preview)", 1)
+            if self.active_view == 2
+            else (self.front_camera_name, "2: FRONT XZ (preview)", 2)
+        )
+        return (
+            first,
+            (self.wrist_camera_name, "3: WRIST (observe only)", 3),
+        )
+
     def get_ui_windows(self):
         if self.ui_window is None:
             self.ui_window = (
@@ -52,14 +66,11 @@ class AuxiliaryCameraPanel(Plugin):
         self.ui_window.Pos(max(0, width - self.panel_width - 10), 10)
         self.ui_window.Label(f"Views | active={self.active_view}")
         self.ui_window.remove_children()
-        labels = (
-            "2: FRONT XZ (reserved)",
-            "3: WRIST (observe only)",
-        )
-        for index, (name, label) in enumerate(zip(self.camera_names, labels)):
+        for index, (name, label, view_index) in enumerate(
+            self.displayed_cameras()
+        ):
             camera = self._camera(name)
-            active_index = index + 2
-            prefix = "ACTIVE | " if self.active_view == active_index else ""
+            prefix = "ACTIVE | " if self.active_view == view_index else ""
             self.ui_window.append(R.UIDisplayText().Text(prefix + label))
             if camera is None:
                 self.ui_window.append(
