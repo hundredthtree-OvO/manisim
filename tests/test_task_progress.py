@@ -60,6 +60,14 @@ def test_pick_progress_advances_monotonically() -> None:
         state,
         _observation([0.30, 0.30, 0.08], [0.30, 0.30, 0.02]),
     )["task_placed"]
+    fields = dict(
+        task.ui_fields(
+            state,
+            _observation([0.30, 0.30, 0.08], [0.30, 0.30, 0.02]),
+        )
+    )
+    assert fields["phase"] == "placed"
+    assert fields["success"] == "yes"
 
     task.reset()
     state = task.update(_observation([0.2, 0.0, 0.3], [0.45, 0.0, 0.02]))

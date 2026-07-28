@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import importlib.metadata
+import platform
 import time
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
@@ -24,10 +27,26 @@ from mani_sim.recording.episode_recorder import EpisodeRecorder
 from mani_sim.robot_setup import initialize_panda
 from mani_sim.environments.scenario import Scenario, build_scenario
 from mani_sim.runtime.reset_manager import ResetManager
+from mani_sim.runtime.contact_forces import sample_contact_forces
 from mani_sim.tasks.base import TaskObservation
 from mani_sim.tasks.pick_place import PickPlaceTask
 from mani_sim.visualization.target_markers import TargetMarkers
 from mani_sim.visualization.camera_views import AuxiliaryCameraPanel
+from mani_sim.visualization.status_panel import (
+    RuntimeStatus,
+    RuntimeStatusPanel,
+)
+from mani_sim.visualization.force_monitor import (
+    ForceDisplaySample,
+    ForceMonitorPanel,
+)
+
+
+def _package_version(name: str) -> str:
+    try:
+        return importlib.metadata.version(name)
+    except importlib.metadata.PackageNotFoundError:
+        return "unknown"
 
 
 def _to_numpy(value: Any) -> np.ndarray:
@@ -48,25 +67,6 @@ def _single_env_vector(value: Any) -> np.ndarray:
 def _single_env_bool(value: Any) -> bool:
     array = _to_numpy(value)
     return bool(array.reshape(-1)[0])
-
-
-def _maximum_unintended_contact_force(
-    base_env: Any, scenario: Scenario
-) -> float:
-    maximum = 0.0
-    for link in base_env.agent.robot.links:
-        if link.name == "panda_link0":
-            continue
-        force = base_env.scene.get_pairwise_contact_forces(
-            base_env.ground, link
-        )
-        maximum = max(maximum, float(np.linalg.norm(_to_numpy(force))))
-        if scenario.obstacle is not None:
-            force = base_env.scene.get_pairwise_contact_forces(
-                scenario.obstacle, link
-            )
-            maximum = max(maximum, float(np.linalg.norm(_to_numpy(force))))
-    return maximum
 
 
 def _controller_delta_limit(env: gym.Env) -> float:
@@ -185,7 +185,22 @@ def run(config: AppConfig, *, max_steps: int | None = None) -> None:
     )
     recorder_context: Any
     if config.recording.enabled:
-        recorder_context = EpisodeRecorder(config.recording.path)
+        recorder_context = EpisodeRecorder(
+            config.recording.path,
+            metadata={
+                "config": asdict(config),
+                "runtime": {
+                    "python": platform.python_version(),
+                    "mani_skill": _package_version("mani-skill"),
+                    "sapien": _package_version("sapien"),
+                    "torch": _package_version("torch"),
+                },
+                "frame_semantics": (
+                    "command/action are computed from the pre-step TCP; "
+                    "object, task, qpos and qvel fields are sampled post-step"
+                ),
+            },
+        )
     else:
         recorder_context = contextlib.nullcontext(None)
 
@@ -204,6 +219,15 @@ def run(config: AppConfig, *, max_steps: int | None = None) -> None:
         camera_panel = AuxiliaryCameraPanel()
         camera_panel.init(viewer)
         viewer.plugins.append(camera_panel)
+        status_panel = RuntimeStatusPanel()
+        status_panel.init(viewer)
+        viewer.plugins.append(status_panel)
+        force_panel = ForceMonitorPanel(
+            env.unwrapped,
+            history_capacity=int(env.unwrapped.control_freq * 5),
+        )
+        force_panel.init(viewer)
+        viewer.plugins.append(force_panel)
         reachability = None
         if config.reachability.enabled:
             reachability = ReachabilityMap.load(
@@ -266,10 +290,15 @@ def run(config: AppConfig, *, max_steps: int | None = None) -> None:
             )
 
         with recorder_context as recorder:
+            if recorder is not None:
+                print(f"recording_session={recorder.session_dir}")
             step = 0
+            last_task_record: dict[str, Any] = {"task_phase": "not_started"}
+            run_end_reason = "max_steps" if max_steps is not None else "session_end"
             while max_steps is None or step < max_steps:
                 env.unwrapped.render_human()
                 if viewer.closed:
+                    run_end_reason = "window_closed"
                     break
                 _set_main_camera(
                     viewer,
@@ -281,6 +310,7 @@ def run(config: AppConfig, *, max_steps: int | None = None) -> None:
 
                 window = viewer.window
                 if window.key_press(config.input.quit_key):
+                    run_end_reason = "quit"
                     break
                 if window.key_press(config.input.gripper_toggle_key):
                     gripper_target *= -1.0
@@ -303,6 +333,10 @@ def run(config: AppConfig, *, max_steps: int | None = None) -> None:
                 )
                 camera_panel.set_active_view(view_selection.active_view)
                 if window.key_press(config.input.reset_key):
+                    if recorder is not None:
+                        recorder.rotate_episode(
+                            "manual_reset", final_fields=last_task_record
+                        )
                     env.reset(seed=simulation.seed)
                     initialize_panda(env.unwrapped)
                     scenario.reset()
@@ -352,6 +386,10 @@ def run(config: AppConfig, *, max_steps: int | None = None) -> None:
                 else:
                     sample = pointer.sample()
                 if camera_panel.pointer_over_panel(*sample.pixel):
+                    sample = PointerSample(sample.pixel, None, False)
+                if status_panel.pointer_over_panel(*sample.pixel):
+                    sample = PointerSample(sample.pixel, None, False)
+                if force_panel.pointer_over_panel(*sample.pixel):
                     sample = PointerSample(sample.pixel, None, False)
                 if not view_selection.accepts_pointer(sample.pixel):
                     sample = PointerSample(sample.pixel, None, False)
@@ -438,13 +476,10 @@ def run(config: AppConfig, *, max_steps: int | None = None) -> None:
                 )
                 _, _, terminated, truncated, _ = env.step(action)
                 markers.update(raw_target, safe_target)
-                contact_force_n = (
-                    _maximum_unintended_contact_force(
-                        env.unwrapped, scenario
-                    )
-                    if config.collision_protection.enabled
-                    else 0.0
+                force_sample = sample_contact_forces(
+                    env.unwrapped, scenario
                 )
+                contact_force_n = force_sample.maximum_unintended_n
                 contact_emergency_stop = (
                     contact_force_n
                     > config.collision_protection.maximum_unintended_contact_force_n
@@ -497,6 +532,47 @@ def run(config: AppConfig, *, max_steps: int | None = None) -> None:
                         "cube_goal_xy_distance_m": None,
                     }
                 )
+                last_task_record = task_record
+                task_fields = (
+                    task.ui_fields(progress_state, task_observation)
+                    if task is not None
+                    and progress_state is not None
+                    and task_observation is not None
+                    else ()
+                )
+                status_panel.update(
+                    RuntimeStatus.create(
+                        active_view=view_selection.active_view,
+                        tcp_position=_single_env_vector(
+                            env.unwrapped.agent.tcp_pose.p
+                        ),
+                        contact_force_n=contact_force_n,
+                        contact_threshold_n=(
+                            config.collision_protection
+                            .maximum_unintended_contact_force_n
+                        ),
+                        emergency_stop=contact_emergency_stop,
+                        recording=config.recording.enabled,
+                        grip_force_n=force_sample.grip_n,
+                        left_finger_force_n=force_sample.left_finger_n,
+                        right_finger_force_n=force_sample.right_finger_n,
+                        object_force_n=force_sample.object_net_n,
+                        task_fields=task_fields,
+                    )
+                )
+                force_panel.update(
+                    ForceDisplaySample(
+                        grip_n=force_sample.grip_n,
+                        object_n=force_sample.object_net_n,
+                        unintended_n=force_sample.maximum_unintended_n,
+                        left_finger_n=force_sample.left_finger_n,
+                        right_finger_n=force_sample.right_finger_n,
+                        threshold_n=(
+                            config.collision_protection
+                            .maximum_unintended_contact_force_n
+                        ),
+                    )
+                )
 
                 if recorder is not None:
                     recorder.write(
@@ -544,6 +620,20 @@ def run(config: AppConfig, *, max_steps: int | None = None) -> None:
                                 else "none"
                             ),
                             "unintended_contact_force_n": contact_force_n,
+                            "force_left_finger_world_n": (
+                                force_sample.left_finger_world_n
+                            ),
+                            "force_right_finger_world_n": (
+                                force_sample.right_finger_world_n
+                            ),
+                            "force_grip_n": force_sample.grip_n,
+                            "force_object_net_world_n": (
+                                force_sample.object_net_world_n
+                            ),
+                            "force_object_net_n": force_sample.object_net_n,
+                            "force_unintended_by_pair_world_n": (
+                                force_sample.unintended_by_pair_world_n
+                            ),
                             "contact_emergency_stop": contact_emergency_stop,
                             "cube_position": cube_position,
                             "is_grasped": is_grasped,
@@ -571,6 +661,12 @@ def run(config: AppConfig, *, max_steps: int | None = None) -> None:
                 if bool(np.asarray(terminated).any()) or bool(
                     np.asarray(truncated).any()
                 ):
+                    if recorder is not None:
+                        terminated_now = bool(np.asarray(terminated).any())
+                        recorder.rotate_episode(
+                            "terminated" if terminated_now else "truncated",
+                            final_fields=task_record,
+                        )
                     env.reset(seed=simulation.seed)
                     initialize_panda(env.unwrapped)
                     scenario.reset()
@@ -586,6 +682,10 @@ def run(config: AppConfig, *, max_steps: int | None = None) -> None:
                     target_height = reset_state.target_height_m
                     target_depth_y = float(reset_state.target[1])
                     gripper_target = 1.0
+            if recorder is not None:
+                recorder.end_episode(
+                    run_end_reason, final_fields=last_task_record
+                )
     finally:
         env.close()
 

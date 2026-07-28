@@ -39,7 +39,7 @@ camera:
 
 recording:
   enabled: true
-  path: runs/demo0.jsonl
+  path: runs
 
 reachability:
   enabled: true

@@ -177,6 +177,19 @@ FRONT 主窗口鼠标通过 viewer 的真实 model/projection matrix 生成射�
 TOP/FRONT 切换时同步主相机位姿和 FOV，但不修改世界 TCP。新视图仍需
 3 px 鼠标移动才接管，右侧面板区域在两种模式下都屏蔽输入。
 
+### 统一状态面板
+
+右下 `RuntimeStatusPanel` 分为两类字段：
+
+```text
+全局：active view、轴映射、TCP、接触力/阈值、safety、recording
+任务：task、phase、grasped、goal distance、success
+```
+
+全局字段由 runtime 提供；任务字段通过通用 `Task.ui_fields()` 注入，面板
+不引用具体任务类。未来 Push/Pull 只需要返回自己的字段，不需要复制 UI。
+状态面板区域与相机面板一样屏蔽鼠标命令。
+
 ## 7. 控制与可达保护
 
 当前控制器：
@@ -293,13 +306,29 @@ tasks/
 
 ## 9. 轨迹记录
 
-当前默认写入：
+每次运行创建一个不会覆盖旧数据的 session：
 
 ```text
-runs/demo0.jsonl
+runs/<YYYYMMDD-HHMMSS-ffffff>/
+├── metadata.json
+├── episodes.jsonl
+└── episodes/
+    ├── episode_000000.jsonl
+    └── episode_000001.jsonl
 ```
 
-每个控制步一行，主要包含：
+`metadata.json` 保存 `mani-sim.session.v1` schema、session ID、UTC 创建时间、
+完整 YAML 配置，以及 Python、ManiSkill、SAPIEN、PyTorch 版本。
+`episodes.jsonl` 是 episode 索引，记录文件名、起止时间、步数、结束原因和最终
+任务字段。启动时建立 episode 0；按 R、terminated 或 truncated 会封闭当前
+episode 并开启新 episode。退出、关闭窗口和 `--max-steps` 也有明确结束原因。
+
+每个控制步仍为 JSONL 一行，并新增：
+
+- `schema_version`、`session_id`、`episode_id`；
+- episode 内的 `episode_step` 和 session 内连续的 `global_step`。
+
+原有字段保持兼容，主要包含：
 
 - step、时间戳、active view；
 - 鼠标像素和输入有效性；
@@ -310,40 +339,66 @@ runs/demo0.jsonl
 - 方块位置、抓取状态、任务阶段和目标距离；
 - 跟踪误差和安全目标步长。
 
-当前限制：
+当前暂不记录图像。现有平铺字段存在 step 前后采样差异，具体语义已写入
+metadata；正式训练数据导出时再转换成
+`observation_t -> command_t -> action_t -> observation_t+1 -> task_state_t+1`，
+避免现在破坏已有分析脚本。
 
-- 每次启动覆盖旧文件；
-- R 不创建独立 episode；
-- 没有 schema/version/config 元数据；
-- 没有图像；
-- 个别字段存在 step 前后采样时序差异。
+## 10. 接触力记录与实时曲线设计
 
-正式数据采集前应升级为：
+ManiSkill 的 pairwise contact force 是 PhysX 接触冲量除以仿真时间步，单位
+为 N。后续应记录原始三维向量和模长，并区分三类来源：
+
+- **分项指尖力**：左指↔目标物、右指↔目标物分别记录。用于识别单边接触、
+  夹持是否平衡、夹得过紧以及切向滑移；稳定抓取不能只看两指合力，因为
+  左右力可能相互抵消。
+- **物体接触合力**：目标物来自全部接触的合力。用于观察落地支撑、碰撞冲击、
+  抬升、推拉载荷和放置后的稳定过程。它是接触合力，不含重力；静止于地面时
+  接触力通常与重力平衡，不能把该值直接叫作动力学总力。
+- **障碍/非预期力**：机器人各非基座 link 与地面、静态障碍的 pairwise
+  force，分别记录并汇总 max/sum。用于碰撞保护、定位碰撞对象和评估冲击；
+  必须与“夹爪接触任务物体”这种预期接触分离。
+
+建议 UI 仍在同一 SAPIEN 窗口内实现：
 
 ```text
-runs/<session>/
-├── metadata.json
-└── episodes/
-    ├── episode_000000.jsonl
-    └── episode_000001.jsonl
+physics/control sampling (raw, every step)
+-> ForceHistory fixed ring buffer (3–5 s)
+-> display decimation (10–20 Hz)
+-> NumPy rasterizer -> RGBA texture -> UIPicture
 ```
 
-每帧明确组织为
-`observation_t -> command_t -> action_t -> observation_t+1 -> task_state_t+1`。
+不建议每控制帧重绘 Matplotlib，也不建议为曲线增加第二个交互窗口。当前
+SAPIEN UI 没有现成 plot widget，因此采用轻量栅格图最稳定：原始数据完整
+落盘，UI 只显示降采样视图。指尖左右力放一张图，物体合力与非预期力分图；
+当前 `ForceMonitorPanel` 已与 `RuntimeStatusPanel` 分离：运行状态恢复为紧凑
+文本，独立 Force monitor 窗口显示最近 5 秒真正的 RGBA 彩色折线。蓝色为
+双指有效夹持力，绿色为物体接触合力，红色为非预期接触，橙色为 8 N 阈值。
+三条曲线共用 `0–40 N` 固定 Y 轴；实测抓取时左右指力约 28 N，因此不采用
+原计划的 20 N 上限。
 
-## 10. 当前验证基线
+绘图由 NumPy 栅格化后上传 `RenderTexture2D`，贴到远离任务场景且无碰撞的
+专用平面，再由 `force_chart_camera` 输出给 `UIPicture`。刷新不创建第二个
+操作系统窗口，也不进入物理系统；TOP/FRONT/WRIST 相机的 far plane 看不到
+该平面。平面位于局部 YZ、相机沿其 +X 法向正视，宽高比与 320×190 纹理
+一致。上传前根据该平面的 UV 方向转置图像，最终横轴为时间（左旧右新），
+纵轴为力（下低上高）；GPU 回归会分别检查图像左右半区，防止曲线区域再次
+被裁掉。Force monitor 区域同样屏蔽鼠标控制。显示层不改写原始记录。
+
+## 11. 当前验证基线
 
 最新验证：
 
 ```text
-普通测试：41 passed，3 GPU tests skipped
-RTX 4070 SUPER：3 physical integration tests passed
-GUI：100-step smoke passed
+普通测试：47 passed，3 GPU tests skipped
+RTX 4070 SUPER：4 physical/render integration tests passed
+GUI：10-step force history + session recording smoke passed
 ```
 
 关键结果：
 
 - Pick-and-Place 最终 XY 误差约 3.38 mm；
+- 抓取时左右指尖力约 28.03 / 28.00 N，物体接触合力约 0.64 N；
 - 最终方块中心高度约 0.02 m；
 - 低位地面非预期接触峰值 0 N；
 - 静态障碍保护目标的障碍接触峰值 0 N；
@@ -353,18 +408,14 @@ GUI：100-step smoke passed
 已知的 NumPy `__array_wrap__` 警告来自 ManiSkill 3.0.1 依赖路径，不影响
 当前测试结果。
 
-## 11. 后续路线
+## 12. 后续路线
 
 建议顺序：
 
-1. 人工验证 FRONT 映射、深度方向和视图切换手感；
-2. UI 显示 active view、任务阶段、抓取状态和接触阈值；
-3. 将记录升级为正式 session/episode 格式；
-4. 增加 yaw，保持 roll/pitch 固定；
-5. 增加 Push 任务和任务专用姿态预设；
-6. Pull/Drawer 阶段加入水平抓取姿态；
-7. 复杂障碍增加整臂距离查询或运动规划；
-8. 最后再进入完整 6D 位姿控制。
-
-暂不优先实现力曲线。当前更有价值的是记录分项指尖/物体/障碍力并离线分析；
-进入 Push、Pull 或力控实验后再考虑在 UI 中显示最近 3–5 秒曲线。
+1. 将指尖/物体/障碍接触力作为正式 schema 字段记录；
+2. 先离线检查量级、噪声、坐标系和阈值，再实现 3–5 秒 UI 曲线；
+3. 增加 yaw，保持 roll/pitch 固定；
+4. 增加 Push 任务和任务专用姿态预设；
+5. Pull/Drawer 阶段加入水平抓取姿态；
+6. 复杂障碍增加整臂距离查询或运动规划；
+7. 最后再进入完整 6D 位姿控制。

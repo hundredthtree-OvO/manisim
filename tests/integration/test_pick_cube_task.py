@@ -9,6 +9,7 @@ from mani_sim.control.ee_servo import EEServo, build_normalized_panda_action
 from mani_sim.control.scene_collision_guard import SceneCollisionGuard
 from mani_sim.robot_setup import initialize_panda
 from mani_sim.reachability import ReachabilityMap
+from mani_sim.runtime.contact_forces import sample_contact_forces
 from mani_sim.task_progress import PickProgress
 from mani_sim.task_scene import build_task_scene
 
@@ -94,6 +95,17 @@ def test_approach_grasp_and_lift_cube() -> None:
             grasped,
         )
         assert state.grasped
+        force_sample = sample_contact_forces(env.unwrapped, scene)
+        print(
+            "grasp_forces_N=",
+            [
+                round(force_sample.left_finger_n, 6),
+                round(force_sample.right_finger_n, 6),
+                round(force_sample.object_net_n, 6),
+            ],
+        )
+        assert force_sample.grip_n >= 0.5
+        assert force_sample.object_net_n > 0.0
 
         lift_target = grasp_target + np.array(
             [0.0, 0.0, config.cube_task.lift_height_m + 0.04]

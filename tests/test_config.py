@@ -12,6 +12,7 @@ def test_demo_config_loads() -> None:
     assert config.reset.policy == "hold_tcp"
     assert config.reset.pointer_rearm_pixels == 3.0
     assert config.reset.pointer_settle_steps == 2
+    assert config.recording.path == "runs"
     assert config.cube_task.position_xy_m == (0.45, 0.0)
     assert config.cube_task.goal_position_xy_m == (0.30, 0.30)
     assert not config.collision_protection.obstacle_enabled

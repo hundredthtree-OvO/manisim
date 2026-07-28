@@ -59,7 +59,7 @@ class CameraConfig:
 @dataclass(frozen=True)
 class RecordingConfig:
     enabled: bool = True
-    path: str = "runs/demo0.jsonl"
+    path: str = "runs"
 
 
 @dataclass(frozen=True)

@@ -133,3 +133,18 @@ class PickPlaceTask:
                 np.linalg.norm(obj[:2] - self.goal_position_xy_m)
             ),
         }
+
+    def ui_fields(
+        self, state: PickPlaceState, observation: TaskObservation
+    ) -> tuple[tuple[str, str], ...]:
+        obj = observation.object_positions[self.object_name]
+        goal_distance = float(
+            np.linalg.norm(obj[:2] - self.goal_position_xy_m)
+        )
+        return (
+            ("task", "pick_place"),
+            ("phase", state.phase),
+            ("grasped", "yes" if state.grasped else "no"),
+            ("goal distance", f"{goal_distance:.3f} m"),
+            ("success", "yes" if state.placed else "no"),
+        )

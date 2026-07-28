@@ -21,3 +21,7 @@ class Task(Protocol):
     def record_fields(
         self, state: Any, observation: TaskObservation
     ) -> dict[str, Any]: ...
+
+    def ui_fields(
+        self, state: Any, observation: TaskObservation
+    ) -> tuple[tuple[str, str], ...]: ...
