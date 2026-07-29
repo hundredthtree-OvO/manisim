@@ -1,5 +1,0 @@
-{
-  "last_turn_at": "2026-07-29T02:11:49.763Z",
-  "turn_count": 48,
-  "last_agent_output": "已完成人工与自动随机化对齐。\n\n现在有三个入口：\n\n```bash\n# 固定人工场景：调试和熟悉控制\nuv run mani-sim --config configs/demo0.yaml\n\n# 随机"
-}
