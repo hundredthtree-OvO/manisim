@@ -15,6 +15,8 @@ class RuntimeStatus:
     contact_threshold_n: float
     emergency_stop: bool
     recording: bool
+    episode_seed: int = 0
+    randomized_scene: bool = False
     grip_force_n: float = 0.0
     left_finger_force_n: float = 0.0
     right_finger_force_n: float = 0.0
@@ -31,6 +33,8 @@ class RuntimeStatus:
         contact_threshold_n: float,
         emergency_stop: bool,
         recording: bool,
+        episode_seed: int = 0,
+        randomized_scene: bool = False,
         grip_force_n: float = 0.0,
         left_finger_force_n: float = 0.0,
         right_finger_force_n: float = 0.0,
@@ -44,6 +48,8 @@ class RuntimeStatus:
             contact_threshold_n=contact_threshold_n,
             emergency_stop=emergency_stop,
             recording=recording,
+            episode_seed=episode_seed,
+            randomized_scene=randomized_scene,
             grip_force_n=grip_force_n,
             left_finger_force_n=left_finger_force_n,
             right_finger_force_n=right_finger_force_n,
@@ -106,6 +112,12 @@ class RuntimeStatusPanel(Plugin):
             ),
             f"SAFETY: {safety}",
             f"RECORDING: {'ON' if status.recording else 'OFF'}",
+            f"EPISODE SEED: {status.episode_seed}",
+            (
+                "SCENE: RANDOMIZED"
+                if status.randomized_scene
+                else "SCENE: FIXED"
+            ),
             "--- FORCE ---",
             f"F L/R: {status.left_finger_force_n:.2f}/"
             f"{status.right_finger_force_n:.2f} N | "

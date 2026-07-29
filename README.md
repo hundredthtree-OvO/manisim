@@ -18,9 +18,23 @@ uv sync --locked
 
 ### 人工鼠标采集
 
+固定场景用于熟悉控制和调试：
+
 ```bash
 uv run mani-sim --config configs/demo0.yaml
 ```
+
+与自动策略使用相同位置分布的正式人工采集：
+
+```bash
+uv run mani-sim --config configs/manual_randomized.yaml
+```
+
+随机人工模式会在首次启动时使用 `simulation.seed`，每次按 `R` 封闭当前
+episode、将 seed 加一，并重新生成 Cube 和目标区。状态面板显示
+`EPISODE SEED` 和 `SCENE: RANDOMIZED`；轨迹也记录 `episode_seed`、
+`cube_initial_position` 和 `goal_position`。因此人工和自动记录中相同 seed
+对应相同初始场景，可以直接配对比较。
 
 操作：
 
@@ -76,6 +90,11 @@ WRIST 画面、目标标记、任务状态和实时力曲线都会继续刷新�
 重新生成方块 XY 和目标区 XY，同时强制两者至少间隔 `0.18 m`。当前范围经过
 固定向下夹爪的真实物理回归，适合先验证采集链路；它还不包含尺寸、质量、
 摩擦、光照或障碍随机化。
+
+[manual_randomized.yaml](configs/manual_randomized.yaml) 与
+[scripted_pick_place.yaml](configs/scripted_pick_place.yaml) 使用完全相同的
+位置范围和最小距离约束；两者只在 `collection.source` 和 episode 推进方式上
+不同。修改实验分布时应同步修改并运行配置测试，避免人工/自动数据悄然失配。
 
 状态面板的 `source` 显示 `scripted_pick_place`，`policy phase` 依次经过
 `approach -> descend -> close -> lift -> transport -> lower -> open ->

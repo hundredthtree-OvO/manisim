@@ -244,7 +244,8 @@ reward、collision penalty 或 residual policy；不从零训练大规模 RL。
 已完成统一 `TaskSpaceCommand`、`ActionSource`、`CommandExecutor` 和
 `RuntimeObservation` 插口；当前人工模式和单环境
 `ScriptedPickPlaceSource` 已通过同一执行链运行，并共享 UI、force 与
-session/episode 记录。
+session/episode 记录。固定人工模式用于调试，随机人工模式和自动策略已共享
+同一位置分布与 seed 语义，可进行成对比较。
 
 下一步：
 

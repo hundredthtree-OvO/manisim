@@ -31,3 +31,31 @@ def test_scripted_collection_config_loads() -> None:
 
     assert config.collection.source == "scripted_pick_place"
     assert config.collection.max_episode_steps == 800
+
+
+def test_manual_and_scripted_randomization_distributions_match() -> None:
+    manual = load_config(Path("configs/manual_randomized.yaml"))
+    scripted = load_config(Path("configs/scripted_pick_place.yaml"))
+
+    assert manual.collection.source == "mouse"
+    assert manual.cube_task.randomize_positions
+    assert (
+        manual.cube_task.target_x_bounds_m
+        == scripted.cube_task.target_x_bounds_m
+    )
+    assert (
+        manual.cube_task.target_y_bounds_m
+        == scripted.cube_task.target_y_bounds_m
+    )
+    assert (
+        manual.cube_task.goal_x_bounds_m
+        == scripted.cube_task.goal_x_bounds_m
+    )
+    assert (
+        manual.cube_task.goal_y_bounds_m
+        == scripted.cube_task.goal_y_bounds_m
+    )
+    assert (
+        manual.cube_task.minimum_start_goal_distance_m
+        == scripted.cube_task.minimum_start_goal_distance_m
+    )

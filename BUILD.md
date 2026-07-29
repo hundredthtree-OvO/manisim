@@ -463,6 +463,16 @@ GUI：100-step refactored manual-control smoke passed
 - 5 条随机位置真实 GUI/PhysX 回归为 `5/5` 成功，平均 279 步，非预期
   接触力峰值 `0 N`。
 
+人工/自动分布对齐也已完成：
+
+- 保留 `configs/demo0.yaml` 作为固定场景人工调试入口；
+- 新增 `configs/manual_randomized.yaml` 作为正式随机人工采集入口；
+- 人工随机与自动策略共享完全相同的 Cube/goal 范围和最小距离约束；
+- 相同 `episode_seed` 保证相同初始场景；
+- 人工按 `R` 推进 seed，自动在成功或超时后推进；
+- Runtime status 显示 episode seed 和 fixed/randomized 场景状态；
+- 配置测试会检查人工与自动随机分布一致，防止后续单边修改。
+
 建议顺序：
 
 1. 将随机位置批次扩大到 50～100 条，建立首个稳定基线；

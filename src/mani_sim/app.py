@@ -638,6 +638,10 @@ def run(
                         ),
                         emergency_stop=contact_emergency_stop,
                         recording=config.recording.enabled,
+                        episode_seed=episode_seed,
+                        randomized_scene=(
+                            config.cube_task.randomize_positions
+                        ),
                         grip_force_n=force_sample.grip_n,
                         left_finger_force_n=force_sample.left_finger_n,
                         right_finger_force_n=force_sample.right_finger_n,

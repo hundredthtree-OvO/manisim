@@ -1,5 +1,5 @@
 {
-  "last_turn_at": "2026-07-28T12:51:21.805Z",
-  "turn_count": 47,
-  "last_agent_output": "应该对齐，但不是强制让人工模式永远随机，而是让人工和自动模式使用同一套可配置的场景分布。\n\n目前：\n\n- 自动配置：每个 episode 随机 Cube 和目标区位置。\n- 人工配置：仍是固定位置。\n"
+  "last_turn_at": "2026-07-29T02:11:49.763Z",
+  "turn_count": 48,
+  "last_agent_output": "已完成人工与自动随机化对齐。\n\n现在有三个入口：\n\n```bash\n# 固定人工场景：调试和熟悉控制\nuv run mani-sim --config configs/demo0.yaml\n\n# 随机"
 }

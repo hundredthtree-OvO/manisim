@@ -13,6 +13,8 @@ def test_status_panel_formats_global_and_task_fields() -> None:
             contact_threshold_n=8.0,
             emergency_stop=False,
             recording=True,
+            episode_seed=7,
+            randomized_scene=True,
             grip_force_n=3.0,
             left_finger_force_n=3.1,
             right_finger_force_n=3.0,
@@ -28,6 +30,8 @@ def test_status_panel_formats_global_and_task_fields() -> None:
     assert "ACTIVE VIEW: FRONT XZ" in lines
     assert "UNINTENDED CONTACT: 1.25 / 8.00 N" in lines
     assert "SAFETY: OK" in lines
+    assert "EPISODE SEED: 7" in lines
+    assert "SCENE: RANDOMIZED" in lines
     assert any("F L/R: 3.10/3.00 N" in line for line in lines)
     assert "PHASE: lifted" in lines
 
