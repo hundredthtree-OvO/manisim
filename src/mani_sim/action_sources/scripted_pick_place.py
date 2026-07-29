@@ -36,6 +36,21 @@ class ScriptedPickPlaceSource:
         self._initial_object_height_m: float | None = None
         self._release_steps = 0
 
+    def get_experiment_state(self) -> dict[str, object]:
+        return {
+            "phase": self.phase,
+            "initial_object_height_m": self._initial_object_height_m,
+            "release_steps": self._release_steps,
+        }
+
+    def set_experiment_state(self, state: dict[str, object]) -> None:
+        self.phase = str(state["phase"])
+        initial_height = state["initial_object_height_m"]
+        self._initial_object_height_m = (
+            None if initial_height is None else float(initial_height)
+        )
+        self._release_steps = int(state["release_steps"])
+
     def _reached(
         self, observation: RuntimeObservation, target: np.ndarray
     ) -> bool:

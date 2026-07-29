@@ -140,3 +140,14 @@ def test_scripted_pick_place_source_reset_restarts_at_approach() -> None:
 
     assert source.phase == "approach"
     assert command.metadata == {"policy_phase": "approach"}
+
+
+def test_scripted_source_experiment_state_round_trip() -> None:
+    source = ScriptedPickPlaceSource()
+    source.act(_pick_place_observation([0.45, 0.0, 0.10]))
+    expected = source.get_experiment_state()
+    source.reset()
+
+    source.set_experiment_state(expected)
+
+    assert source.get_experiment_state() == expected

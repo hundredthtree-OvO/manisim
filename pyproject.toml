@@ -15,6 +15,10 @@ dependencies = [
 mani-sim = "mani_sim.app:main"
 mani-sim-calibrate = "mani_sim.calibration:main"
 mani-sim-report = "mani_sim.recording.session_report:main"
+mani-sim-branch-collect = "mani_sim.experiments.run_pre_lift:main"
+mani-sim-effect-dataset = "mani_sim.experiments.effect_dataset:main"
+mani-sim-effect-baseline = "mani_sim.experiments.effect_baseline:main"
+mani-sim-effect-baseline-summary = "mani_sim.experiments.effect_baseline_summary:main"
 
 [build-system]
 requires = ["uv_build>=0.11.20,<0.12.0"]

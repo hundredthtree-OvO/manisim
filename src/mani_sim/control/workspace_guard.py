@@ -46,6 +46,40 @@ class WorkspaceGuard:
         self._low_progress_steps = 0
         self._saturated = False
 
+    def get_experiment_state(self) -> dict[str, object]:
+        return {
+            "previous_tcp": (
+                None
+                if self._previous_tcp is None
+                else self._previous_tcp.copy()
+            ),
+            "saturation_target": (
+                None
+                if self._saturation_target is None
+                else self._saturation_target.copy()
+            ),
+            "low_progress_steps": self._low_progress_steps,
+            "saturated": self._saturated,
+        }
+
+    def set_experiment_state(self, state: dict[str, object]) -> None:
+        previous_tcp = state["previous_tcp"]
+        saturation_target = state["saturation_target"]
+        self._previous_tcp = (
+            None
+            if previous_tcp is None
+            else np.asarray(previous_tcp, dtype=np.float64).copy()
+        )
+        self._saturation_target = (
+            None
+            if saturation_target is None
+            else np.asarray(
+                saturation_target, dtype=np.float64
+            ).copy()
+        )
+        self._low_progress_steps = int(state["low_progress_steps"])
+        self._saturated = bool(state["saturated"])
+
     def clip_target(self, requested_target: ArrayLike) -> NDArray[np.float64]:
         target = np.asarray(requested_target, dtype=np.float64).copy()
         target[0] = np.clip(target[0], *self.x_bounds_m)

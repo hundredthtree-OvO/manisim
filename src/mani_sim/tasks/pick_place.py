@@ -77,6 +77,32 @@ class PickPlaceTask:
         self.released = False
         self.placed = False
 
+    def get_experiment_state(self) -> dict[str, Any]:
+        return {
+            "initial_object_height_m": self.initial_object_height_m,
+            "goal_position_xy_m": self.goal_position_xy_m.copy(),
+            "approached": self.approached,
+            "ever_grasped": self.ever_grasped,
+            "lifted": self.lifted,
+            "transported": self.transported,
+            "released": self.released,
+            "placed": self.placed,
+        }
+
+    def set_experiment_state(self, state: dict[str, Any]) -> None:
+        self.initial_object_height_m = float(
+            state["initial_object_height_m"]
+        )
+        self.goal_position_xy_m = np.asarray(
+            state["goal_position_xy_m"], dtype=np.float64
+        ).copy()
+        self.approached = bool(state["approached"])
+        self.ever_grasped = bool(state["ever_grasped"])
+        self.lifted = bool(state["lifted"])
+        self.transported = bool(state["transported"])
+        self.released = bool(state["released"])
+        self.placed = bool(state["placed"])
+
     def update(self, observation: TaskObservation) -> PickPlaceState:
         tcp = observation.tcp_position
         obj = observation.object_positions[self.object_name]

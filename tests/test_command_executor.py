@@ -78,3 +78,29 @@ def test_valid_command_uses_shared_guard_and_servo_chain() -> None:
     assert execution.command.source == "scripted"
     assert execution.action.shape == (4,)
     assert execution.action[-1] == -1.0
+
+
+def test_executor_experiment_state_round_trip() -> None:
+    executor = _executor()
+    expected = executor.get_experiment_state()
+    executor.prepare(
+        TaskSpaceCommand.create(
+            target_position=[0.7, 0.1, 0.5],
+            gripper_position=1.0,
+            timestamp=1.0,
+            source="test",
+        ),
+        _observation(),
+    )
+
+    executor.set_experiment_state(expected)
+
+    assert np.allclose(
+        executor.last_safe_target, expected["last_safe_target"]
+    )
+    assert (
+        executor.workspace_guard.get_experiment_state()[
+            "low_progress_steps"
+        ]
+        == expected["workspace_guard"]["low_progress_steps"]
+    )

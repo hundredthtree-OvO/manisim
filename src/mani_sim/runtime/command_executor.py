@@ -69,6 +69,22 @@ class CommandExecutor:
     def emergency_stop(self, tcp_position: np.ndarray) -> None:
         self.reset(tcp_position)
 
+    def get_experiment_state(self) -> dict[str, Any]:
+        return {
+            "last_safe_target": self.last_safe_target.copy(),
+            "workspace_guard": (
+                self.workspace_guard.get_experiment_state()
+            ),
+        }
+
+    def set_experiment_state(self, state: dict[str, Any]) -> None:
+        self.last_safe_target = np.asarray(
+            state["last_safe_target"], dtype=np.float64
+        ).copy()
+        self.workspace_guard.set_experiment_state(
+            state["workspace_guard"]
+        )
+
     def prepare(
         self,
         command: TaskSpaceCommand,

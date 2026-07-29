@@ -73,3 +73,33 @@ def test_pick_progress_advances_monotonically() -> None:
     state = task.update(_observation([0.2, 0.0, 0.3], [0.45, 0.0, 0.02]))
     assert state.phase == "approaching"
     assert not state.placed
+
+
+def test_pick_place_experiment_state_round_trip() -> None:
+    task = PickPlaceTask(
+        initial_object_height_m=0.02,
+        approach_clearance_m=0.08,
+        lift_height_m=0.10,
+        goal_position_xy_m=(0.30, 0.30),
+        goal_tolerance_m=0.04,
+        place_height_tolerance_m=0.015,
+    )
+    task.update(
+        _observation(
+            [0.45, 0.0, 0.15],
+            [0.45, 0.0, 0.13],
+            True,
+        )
+    )
+    expected = task.get_experiment_state()
+    task.reset()
+
+    task.set_experiment_state(expected)
+
+    restored = task.get_experiment_state()
+    assert restored["ever_grasped"]
+    assert restored["lifted"]
+    assert np.allclose(
+        restored["goal_position_xy_m"],
+        expected["goal_position_xy_m"],
+    )
